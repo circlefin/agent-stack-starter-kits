@@ -1,0 +1,27 @@
+{
+  "name": "@agent-stack-ecosystem-kits/kit-google-adk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Autonomous Payment Agent example using the Google Agent Development Kit (ADK) + Circle Agent Stack.",
+  "type": "module",
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "scripts": {
+    "demo": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
+    "@google/adk": "^1.1.0",
+    "@google/genai": "^1.37.0",
+    "dotenv": "^17.4.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}

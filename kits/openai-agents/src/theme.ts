@@ -1,0 +1,92 @@
+/**
+ * Terminal colors for the demo's output. Dependency-free ANSI; colors switch
+ * off when stdout is not a TTY or when NO_COLOR is set. https://no-color.org/
+ */
+
+const enabled = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+
+function sgr(open: number, close: number): (s: string) => string {
+  return (s) => (enabled ? `\x1b[${open}m${s}\x1b[${close}m` : s);
+}
+
+export const bold = sgr(1, 22);
+export const dim = sgr(2, 22);
+export const red = sgr(31, 39);
+export const green = sgr(32, 39);
+export const yellow = sgr(33, 39);
+export const magenta = sgr(35, 39);
+export const cyan = sgr(36, 39);
+export const gray = sgr(90, 39);
+
+export function colorizeJson(value: unknown, indent = 2): string {
+  let json: string;
+  if (typeof value === 'string') {
+    try {
+      json = JSON.stringify(JSON.parse(value), null, indent);
+    } catch {
+      return value;
+    }
+  } else {
+    json = JSON.stringify(value, null, indent);
+  }
+  if (json === undefined) return String(value);
+  if (!enabled) return json;
+
+  return json.replace(
+    /("(?:\\.|[^\\"])*")(\s*:)?|\b(true|false)\b|\b(null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    (full, str, colon, bool, nul, num) => {
+      if (str !== undefined) return colon !== undefined ? cyan(str) + colon : green(str);
+      if (bool !== undefined) return yellow(bool);
+      if (nul !== undefined) return gray(nul);
+      if (num !== undefined) return magenta(num);
+      return full;
+    },
+  );
+}
+
+/**
+ * Colorize one `[tool]` log line. Bold tool name, muted key=value args,
+ * green `←` on success, red `✗` on error.
+ */
+export function toolLine(line: string): string {
+  const prefix = dim(cyan('[tool]'));
+  const m = /^(\S+)([\s\S]*)$/.exec(line);
+  if (!m) return `${prefix} ${line}`;
+  const name = bold(m[1] ?? '');
+  const rest = m[2] ?? '';
+
+  const fail = rest.indexOf('✗');
+  if (fail >= 0) {
+    const before = rest.slice(0, fail);
+    const after = rest.slice(fail + 1);
+    const jsonAt = after.search(/[{[]/);
+    if (jsonAt >= 0) {
+      const head = after.slice(0, jsonAt);
+      const blob = after.slice(jsonAt).trim();
+      try {
+        JSON.parse(blob);
+        return `${prefix} ${name}${before}${red('✗')}${red(head)}\n${colorizeJson(blob)}`;
+      } catch {
+        // not JSON, fall through
+      }
+    }
+    return `${prefix} ${name}${before}${red('✗')}${red(after)}`;
+  }
+
+  const hit = rest.indexOf('←');
+  if (hit >= 0) {
+    const before = rest.slice(0, hit);
+    const after = rest.slice(hit + 1);
+    return `${prefix} ${name}${before}${green('←')}${dim(after)}`;
+  }
+
+  return `${prefix} ${name}${rest.replace(/(\b\w+)=/g, (_w, k) => `${gray(k)}=`)}`;
+}
+
+export function kitLine(line: string): string {
+  return `${dim(magenta('[openai-agents-kit]'))} ${line}`;
+}
+
+export function heading(label: string): string {
+  return bold(cyan(label));
+}

@@ -1,0 +1,28 @@
+{
+  "name": "@agent-stack-ecosystem-kits/kit-vercel-ai",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Autonomous Payment Agent example using Vercel AI SDK + Circle Agent Stack.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "demo": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
+    "@ai-sdk/anthropic": "^1.0.0",
+    "@ai-sdk/openai": "^1.2.0",
+    "ai": "^4.3.0",
+    "dotenv": "^17.4.2",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}
