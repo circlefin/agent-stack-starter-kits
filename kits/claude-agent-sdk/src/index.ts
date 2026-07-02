@@ -6,7 +6,11 @@ import {
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { createChatUi, type ChatUi } from '@agent-stack-ecosystem-kits/agent-cli';
-import { ensureSession } from '@agent-stack-ecosystem-kits/circle-tools';
+import {
+  ensureSession,
+  formatUsdcBalance,
+  walletUsdcBalance,
+} from '@agent-stack-ecosystem-kits/circle-tools';
 
 import { buildQueryOptions } from './agent';
 import { loadConfig } from './config';
@@ -31,6 +35,17 @@ function log(line: string): void {
 function out(line: string): void {
   if (ui) ui.log(line);
   else console.log(line);
+}
+
+/** Refresh the pinned USDC balance readout. Best-effort: a balance read must
+ * never break the session (e.g. before a wallet exists, or on an RPC blip). */
+async function refreshBalance(): Promise<void> {
+  try {
+    const summary = await walletUsdcBalance();
+    ui?.setBalance(summary ? formatUsdcBalance(summary) : null);
+  } catch {
+    // Leave the last shown balance in place.
+  }
 }
 
 /** True when an error string is an Anthropic "Overloaded" (HTTP 529). The
@@ -159,6 +174,7 @@ async function main(): Promise<void> {
   // agent runs. Logs in with email + OTP if needed; a pending Terms gate is
   // reported as a manual step (the kit never accepts the Terms for the user).
   await ensureSession({ ask, log, bold });
+  await refreshBalance();
 
   log('invoking agent ...');
   chat.setStatus('working…');
@@ -176,6 +192,7 @@ async function main(): Promise<void> {
     } else if (msg.type === 'result') {
       printResult(msg);
       chat.setStatus(null);
+      await refreshBalance();
       // A blank line is a stray Enter, not an intent to quit: re-prompt without
       // feeding the input stream. `exit` (handled in `ask`) and `quit` still halt.
       let next = (await ask('> ')).trim();

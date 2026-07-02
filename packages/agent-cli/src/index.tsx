@@ -27,6 +27,8 @@ export interface ChatUi {
   ask(question: string): Promise<string>;
   /** Show (or clear, with null) a transient status line above the input. */
   setStatus(text: string | null): void;
+  /** Show (or clear, with null) a persistent balance line pinned above the input. */
+  setBalance(text: string | null): void;
   /** Unmount the UI and restore the patched console methods. */
   close(): void;
 }
@@ -45,6 +47,7 @@ interface Snapshot {
   logs: LogItem[];
   question: string | null;
   status: string | null;
+  balance: string | null;
 }
 
 interface Store {
@@ -70,7 +73,7 @@ function toLabel(question: string): string {
 
 function createInkUi(options: ChatUiOptions): ChatUi {
   const initialLogs: LogItem[] = options.title ? [{ id: 0, text: options.title }] : [];
-  let snapshot: Snapshot = { logs: initialLogs, question: null, status: null };
+  let snapshot: Snapshot = { logs: initialLogs, question: null, status: null, balance: null };
   let nextId = 1;
   const listeners = new Set<() => void>();
 
@@ -111,6 +114,11 @@ function createInkUi(options: ChatUiOptions): ChatUi {
     emit();
   };
 
+  const setBalance = (text: string | null): void => {
+    snapshot = { ...snapshot, balance: text };
+    emit();
+  };
+
   // Route stray console output (tool logs, agent retries, CLI login output)
   // into the scrollback so nothing prints outside the Ink frame. Ink's own
   // console patching is disabled below so these two never fight.
@@ -135,6 +143,7 @@ function createInkUi(options: ChatUiOptions): ChatUi {
     log: pushLog,
     ask,
     setStatus,
+    setBalance,
     close: () => {
       if (closed) return;
       closed = true;
@@ -174,6 +183,13 @@ function App({ store, onSubmit }: { store: Store; onSubmit: (value: string) => v
           </Box>
         </Box>
       ) : null}
+      {snap.balance !== null ? (
+        <Text color="green">
+          {'◈ '}
+          <Text bold>Wallet Balance:</Text>
+          {` ${snap.balance}`}
+        </Text>
+      ) : null}
     </Box>
   );
 }
@@ -191,6 +207,7 @@ function createPlainUi(): ChatUi {
       }
     },
     setStatus: () => {},
+    setBalance: () => {},
     close: () => {},
   };
 }

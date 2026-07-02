@@ -1,7 +1,11 @@
 import { HumanMessage } from '@langchain/core/messages';
 import { Command } from '@langchain/langgraph';
 import { createChatUi, type ChatUi } from '@agent-stack-ecosystem-kits/agent-cli';
-import { ensureSession } from '@agent-stack-ecosystem-kits/circle-tools';
+import {
+  ensureSession,
+  formatUsdcBalance,
+  walletUsdcBalance,
+} from '@agent-stack-ecosystem-kits/circle-tools';
 
 import { buildAgent } from './agent';
 import { loadConfig } from './config';
@@ -25,6 +29,17 @@ function log(line: string): void {
 function out(line: string): void {
   if (ui) ui.log(line);
   else console.log(line);
+}
+
+/** Refresh the pinned USDC balance readout. Best-effort: a balance read must
+ * never break the session (e.g. before a wallet exists, or on an RPC blip). */
+async function refreshBalance(): Promise<void> {
+  try {
+    const summary = await walletUsdcBalance();
+    ui?.setBalance(summary ? formatUsdcBalance(summary) : null);
+  } catch {
+    // Leave the last shown balance in place.
+  }
 }
 
 /** A tool call the agent paused on, awaiting human review. Shape is loose
@@ -189,6 +204,7 @@ async function main(): Promise<void> {
   // runs. Logs in with email + OTP if needed; a pending Terms gate is reported
   // as a manual step (the kit never accepts the Terms for the user).
   await ensureSession({ ask, log, bold });
+  await refreshBalance();
 
   // Built after `ask` exists: the agent's circle_login tool prompts for email +
   // OTP through it to recover a logged-out session mid-conversation.
@@ -212,6 +228,7 @@ async function main(): Promise<void> {
       const result = await runTurn(agent, input, runConfig, ask);
       chat.setStatus(null);
       printFinal(result);
+      await refreshBalance();
     }
 
     const next = (await ask('> ')).trim();

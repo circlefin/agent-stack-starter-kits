@@ -2,7 +2,11 @@ import 'dotenv/config';
 import type { CoreMessage } from 'ai';
 
 import { createChatUi, type ChatUi } from '@agent-stack-ecosystem-kits/agent-cli';
-import { ensureSession } from '@agent-stack-ecosystem-kits/circle-tools';
+import {
+  ensureSession,
+  formatUsdcBalance,
+  walletUsdcBalance,
+} from '@agent-stack-ecosystem-kits/circle-tools';
 import { loadConfig, type KitConfig } from './config';
 import { runTurn } from './agent';
 import { buildTools, type CircleTools } from './tools';
@@ -21,6 +25,17 @@ function log(line: string): void {
   const formatted = kitLine(line);
   if (ui) ui.log(formatted);
   else console.log(formatted);
+}
+
+/** Refresh the pinned USDC balance readout. Best-effort: a balance read must
+ * never break the session (e.g. before a wallet exists, or on an RPC blip). */
+async function refreshBalance(): Promise<void> {
+  try {
+    const summary = await walletUsdcBalance();
+    ui?.setBalance(summary ? formatUsdcBalance(summary) : null);
+  } catch {
+    // Leave the last shown balance in place.
+  }
 }
 
 /**
@@ -77,6 +92,7 @@ async function main(): Promise<void> {
     // Check the Circle CLI session before running the agent. Logs in with email
     // + OTP if needed; never auto-accepts Circle Terms of Use.
     await ensureSession({ ask, log, bold });
+    await refreshBalance();
 
     // ── Bootstrap ─────────────────────────────────────────────────────────────
     // The first turn is driven by the Circle setup skill, not a system prompt.
@@ -99,6 +115,7 @@ async function main(): Promise<void> {
     chat.setStatus('working…');
     const { responseMessages } = await runAgentTurn(config, messages, tools);
     chat.setStatus(null);
+    await refreshBalance();
     messages = [...messages, ...responseMessages];
 
     // ── REPL ──────────────────────────────────────────────────────────────────
@@ -121,6 +138,7 @@ async function main(): Promise<void> {
       chat.setStatus('working…');
       const { responseMessages: nextMessages } = await runAgentTurn(config, messages, tools);
       chat.setStatus(null);
+      await refreshBalance();
       messages = [...messages, ...nextMessages];
     }
   } catch (err: unknown) {

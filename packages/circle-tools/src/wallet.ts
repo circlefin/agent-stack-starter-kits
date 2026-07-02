@@ -1,6 +1,6 @@
 import { runCircle, runCircleJson } from './cli';
 import { openInBrowser } from './browser';
-import { chainCli, chainRpcUrl, DEFAULT_CHAIN, type Chain } from './chains';
+import { chainCli, chainLabel, chainRpcUrl, DEFAULT_CHAIN, type Chain } from './chains';
 import type { AgentWallet, TokenBalance, WalletBalance } from './types';
 
 /**
@@ -167,6 +167,43 @@ export async function getBalance(input: GetBalanceInput): Promise<WalletBalance>
     address: raw.data?.address ?? input.address,
     tokens,
   };
+}
+
+export interface UsdcBalanceSummary {
+  address: string;
+  /** Human USDC amount, e.g. "2.85". */
+  usdc: string;
+  chain: Chain;
+}
+
+/**
+ * Fetch a compact USDC balance summary for the agent's first wallet, for UI
+ * display. Returns null when no wallet exists yet (e.g. before setup) so a
+ * caller can simply hide the readout. Best-effort: a caller should treat a
+ * throw as "unknown" and never break the session over a balance read.
+ */
+export async function walletUsdcBalance(
+  chain: Chain = DEFAULT_CHAIN,
+): Promise<UsdcBalanceSummary | null> {
+  const wallets = await listWallets();
+  const first = wallets[0];
+  if (!first) return null;
+  const balance = await getBalance({ address: first.address, chain });
+  const usdc = balance.tokens.find((t) => t.symbol === 'USDC')?.amount ?? '0';
+  return { address: first.address, usdc, chain };
+}
+
+/** Abbreviate an EVM address for display, e.g. `0x6be2…fbb5`. */
+export function shortAddress(address: string): string {
+  return address.length > 12 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
+}
+
+/**
+ * One-line USDC balance readout for a status bar, including the chain, e.g.
+ * `$2.85 USDC on Base · 0x6be2…fbb5`.
+ */
+export function formatUsdcBalance(summary: UsdcBalanceSummary): string {
+  return `$${summary.usdc} USDC on ${chainLabel(summary.chain)} · ${shortAddress(summary.address)}`;
 }
 
 /**

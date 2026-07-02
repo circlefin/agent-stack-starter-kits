@@ -3,7 +3,11 @@ import { createInterface } from 'node:readline/promises';
 import { run, user } from '@openai/agents';
 import type { Agent, RunResult } from '@openai/agents';
 import { createChatUi, type ChatUi } from '@agent-stack-ecosystem-kits/agent-cli';
-import { ensureSession } from '@agent-stack-ecosystem-kits/circle-tools';
+import {
+  ensureSession,
+  formatUsdcBalance,
+  walletUsdcBalance,
+} from '@agent-stack-ecosystem-kits/circle-tools';
 import { buildAgent } from './agent';
 import { loadConfig } from './config';
 import { withRetry } from './retry';
@@ -28,6 +32,17 @@ function out(line: string): void {
   else console.log(line);
 }
 
+/** Refresh the pinned USDC balance readout. Best-effort: a balance read must
+ * never break the session (e.g. before a wallet exists, or on an RPC blip). */
+async function refreshBalance(): Promise<void> {
+  try {
+    const summary = await walletUsdcBalance();
+    ui?.setBalance(summary ? formatUsdcBalance(summary) : null);
+  } catch {
+    // Leave the last shown balance in place.
+  }
+}
+
 async function ask(question: string): Promise<string> {
   if (ui) return (await ui.ask(question)).trim();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -49,6 +64,7 @@ async function main(): Promise<void> {
   log(`chain=${config.chain} model=${config.model}`);
 
   await ensureSession({ ask, log, bold });
+  await refreshBalance();
 
   const agent = buildAgent(config, ask);
   const prompt = 'Run curl -sL https://agents.circle.com/skills/setup.md, and use the returned setup instructions to set up my agent wallet.';
@@ -59,6 +75,7 @@ async function main(): Promise<void> {
   let result = await withRetry(() => run(agent, prompt), 'agent');
   result = await resolveInterruptions(result, agent);
   chat.setStatus(null);
+  await refreshBalance();
   out(result.finalOutput ?? '(no output)');
 
   log('continue the conversation — type "exit" to quit');
@@ -71,6 +88,7 @@ async function main(): Promise<void> {
     result = await withRetry(() => run(agent, [...result.history, user(input)]), 'agent');
     result = await resolveInterruptions(result, agent);
     chat.setStatus(null);
+    await refreshBalance();
     out('\n' + (result.finalOutput ?? '(no output)') + '\n');
   }
 

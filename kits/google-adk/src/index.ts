@@ -1,7 +1,11 @@
 import { InMemoryRunner, isFinalResponse, LogLevel, setLogLevel, type Event } from '@google/adk';
 import type { Content } from '@google/genai';
 import { createChatUi, type ChatUi } from '@agent-stack-ecosystem-kits/agent-cli';
-import { ensureSession } from '@agent-stack-ecosystem-kits/circle-tools';
+import {
+  ensureSession,
+  formatUsdcBalance,
+  walletUsdcBalance,
+} from '@agent-stack-ecosystem-kits/circle-tools';
 
 import { buildAgent, type ApprovalFn } from './agent';
 import { loadConfig } from './config';
@@ -33,6 +37,17 @@ function log(line: string): void {
 function out(line: string): void {
   if (ui) ui.log(line);
   else console.log(line);
+}
+
+/** Refresh the pinned USDC balance readout. Best-effort: a balance read must
+ * never break the session (e.g. before a wallet exists, or on an RPC blip). */
+async function refreshBalance(): Promise<void> {
+  try {
+    const summary = await walletUsdcBalance();
+    ui?.setBalance(summary ? formatUsdcBalance(summary) : null);
+  } catch {
+    // Leave the last shown balance in place.
+  }
 }
 
 /**
@@ -101,6 +116,7 @@ async function main(): Promise<void> {
   // agent runs. Logs in with email + OTP if needed; a pending Terms gate is
   // reported as a manual step (the kit never accepts the Terms for the user).
   await ensureSession({ ask, log, bold });
+  await refreshBalance();
 
   // One session for the whole conversation: the InMemorySessionService is the
   // ADK-native checkpointer, so the agent keeps full context across the
@@ -136,6 +152,7 @@ async function main(): Promise<void> {
         out(`\n${heading('-------------------')}`);
       }
       chat.setStatus(null);
+      await refreshBalance();
     }
 
     const next = (await ask('> ')).trim();
