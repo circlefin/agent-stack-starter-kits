@@ -184,21 +184,30 @@ async function main(): Promise<void> {
 
   // Interactive chat loop. The first turn runs the bootstrap prompt; after
   // the agent settles, the user drives follow-up turns. Each turn shares the
-  // thread_id above, so the agent keeps full context across turns. Empty
-  // input or `exit` / `quit` ends the session.
+  // thread_id above, so the agent keeps full context across turns. `exit` or
+  // `quit` ends the session; a blank line is ignored and re-prompts.
   log('invoking agent ...');
-  let input: { messages: HumanMessage[] } = { messages: [new HumanMessage(userPrompt)] };
+  // `null` means "no new turn to run" — used for the blank-line re-prompt so we
+  // never re-invoke the agent without a fresh user message (that would replay a
+  // thread ending on the assistant's reply, which the model rejects as prefill).
+  let input: { messages: HumanMessage[] } | null = {
+    messages: [new HumanMessage(userPrompt)],
+  };
 
   while (true) {
-    const result = await runTurn(agent, input, runConfig, ask);
-    printFinal(result);
+    if (input) {
+      const result = await runTurn(agent, input, runConfig, ask);
+      printFinal(result);
+    }
 
     const next = (await ask(`\n${bold('You:')}\n> `)).trim();
-    if (!next || next.toLowerCase() === 'quit') {
+    if (next.toLowerCase() === 'quit') {
       log('done.');
       break;
     }
-    input = { messages: [new HumanMessage(next)] };
+    // A blank line is a stray Enter, not an intent to quit: re-prompt without
+    // running a turn. `exit` (handled in `ask`) and `quit` still halt.
+    input = next ? { messages: [new HumanMessage(next)] } : null;
   }
 }
 

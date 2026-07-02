@@ -99,33 +99,39 @@ async function main(): Promise<void> {
   });
 
   log('invoking agent ...');
-  let input: Content = userMessage(bootstrapPrompt);
+  // `null` means "no new turn to run" — used for the blank-line re-prompt so we
+  // never re-invoke the agent without a fresh user message.
+  let input: Content | null = userMessage(bootstrapPrompt);
 
   while (true) {
-    for await (const event of runner.runAsync({
-      userId: USER_ID,
-      sessionId: session.id,
-      newMessage: input,
-    })) {
-      if (event.partial) continue;
-      if (event.errorCode) {
-        log(red(`model error ${event.errorCode}: ${event.errorMessage ?? '(no message)'}`));
-        continue;
+    if (input) {
+      for await (const event of runner.runAsync({
+        userId: USER_ID,
+        sessionId: session.id,
+        newMessage: input,
+      })) {
+        if (event.partial) continue;
+        if (event.errorCode) {
+          log(red(`model error ${event.errorCode}: ${event.errorMessage ?? '(no message)'}`));
+          continue;
+        }
+        if (!isFinalResponse(event)) continue;
+        const text = extractText(event);
+        if (!text) continue;
+        console.log(`\n${heading('--- agent reply ---')}\n`);
+        console.log(text);
+        console.log(`\n${heading('-------------------')}`);
       }
-      if (!isFinalResponse(event)) continue;
-      const text = extractText(event);
-      if (!text) continue;
-      console.log(`\n${heading('--- agent reply ---')}\n`);
-      console.log(text);
-      console.log(`\n${heading('-------------------')}`);
     }
 
     const next = (await ask(`\n${bold('You:')}\n> `)).trim();
-    if (!next || next.toLowerCase() === 'quit') {
+    if (next.toLowerCase() === 'quit') {
       log('done.');
       break;
     }
-    input = userMessage(next);
+    // A blank line is a stray Enter, not an intent to quit: re-prompt without
+    // running a turn. `exit` (handled in `ask`) and `quit` still halt.
+    input = next ? userMessage(next) : null;
   }
 }
 

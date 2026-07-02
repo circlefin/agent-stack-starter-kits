@@ -61,7 +61,9 @@ async function main(): Promise<void> {
 
   while (true) {
     const input = await ask(`\n${bold('You:')}\n> `);
-    if (!input || input.toLowerCase() === 'exit') break;
+    if (input.toLowerCase() === 'exit') break;
+    // A blank line is a stray Enter, not an intent to quit: re-prompt.
+    if (!input) continue;
     messages.push({ role: 'user', content: input });
     const response = await withRetry(() => agent.generate(messages, { maxSteps: 30 }), 'agent');
     const text = response.text ?? '(no output)';

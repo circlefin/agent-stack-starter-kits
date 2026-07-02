@@ -38,7 +38,9 @@ async function main(): Promise<void> {
   log('continue the conversation — type "exit" to quit');
   while (true) {
     const input = await ask(`\n${bold('You:')}\n> `);
-    if (!input || input.toLowerCase() === 'exit') break;
+    if (input.toLowerCase() === 'exit') break;
+    // A blank line is a stray Enter, not an intent to quit: re-prompt.
+    if (!input) continue;
     result = await withRetry(() => run(agent, [...result.history, user(input)]), 'agent');
     result = await resolveInterruptions(result, agent);
     console.log('\n' + (result.finalOutput ?? '(no output)') + '\n');

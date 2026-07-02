@@ -95,10 +95,13 @@ async function main(): Promise<void> {
 
     while (true) {
       const input = (await ask(`\n${bold('You:')}\n> `)).trim();
-      if (!input || input.toLowerCase() === 'quit') {
+      if (input.toLowerCase() === 'quit') {
         log('done.');
         break;
       }
+      // A blank line is a stray Enter, not an intent to quit: re-prompt.
+      // `exit` (handled in `ask`) and `quit` still halt.
+      if (!input) continue;
       messages.push({ role: 'user', content: input });
 
       const { responseMessages: nextMessages } = await runAgentTurn(config, messages, tools);

@@ -162,8 +162,13 @@ async function main(): Promise<void> {
       printAssistant(msg);
     } else if (msg.type === 'result') {
       printResult(msg);
-      const next = (await ask(`\n${bold('You:')}\n> `)).trim();
-      if (!next || next.toLowerCase() === 'quit') {
+      // A blank line is a stray Enter, not an intent to quit: re-prompt without
+      // feeding the input stream. `exit` (handled in `ask`) and `quit` still halt.
+      let next = (await ask(`\n${bold('You:')}\n> `)).trim();
+      while (!next) {
+        next = (await ask(`\n${bold('You:')}\n> `)).trim();
+      }
+      if (next.toLowerCase() === 'quit') {
         log('done.');
         pushInput(null);
       } else {

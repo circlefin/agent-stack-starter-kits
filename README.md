@@ -1,4 +1,4 @@
-# Circle Agent Stack Ecosystem Starter Kits
+# Circle Agent Stack Starter Kits
 
 Open-source starter kits that show how to give AI agents a USDC wallet and let them pay for services autonomously using the [Circle Agent Stack](https://developers.circle.com/agent-stack). Each kit wires the same Circle building blocks — agent wallets, nanopayments, and the [Circle Agent Marketplace](https://agents.circle.com/services) — into a different popular AI agent framework, so you can compare integrations side by side and bootstrap your own payment-enabled agent in minutes.
 
