@@ -1,6 +1,8 @@
 # Circle Agent Stack Starter Kits
 
-Open-source starter kits that show how to give AI agents a USDC wallet and let them pay for services autonomously using the [Circle Agent Stack](https://developers.circle.com/agent-stack). Each kit wires the same Circle building blocks — agent wallets, nanopayments, and the [Circle Agent Marketplace](https://agents.circle.com/services) — into a different popular AI agent framework, so you can compare integrations side by side and bootstrap your own payment-enabled agent in minutes.
+Open-source starter kits for developers building agent harneses that need access to wallets and USDC to autonomously pay for x402 and Nanopayment-enabled services via the [Circle Agent Stack](https://developers.circle.com/agent-stack). Each kit wires the Agent Stack — agent wallets, nanopayments, and the [Circle Agent Marketplace](https://agents.circle.com/services) — into a different popular AI agent framework and drops you into an interactive terminal chat with the agent.
+
+<img width="1200" height="600" alt="Claude Agent Terminal" src="demo.gif" />
 
 ## Kits
 
@@ -13,9 +15,10 @@ Open-source starter kits that show how to give AI agents a USDC wallet and let t
 | [`kits/vercel-ai`](./kits/vercel-ai) | Vercel AI SDK | https://sdk.vercel.ai/docs |
 | [`kits/google-adk`](./kits/google-adk) | Google Agent Development Kit | https://adk.dev/get-started/typescript/ |
 
-## Shared package
+## Shared packages
 
 - [`packages/circle-tools`](./packages/circle-tools): framework-agnostic wrappers around the Circle CLI (wallets, balances, service discovery, x402 payments).
+- [`packages/agent-cli`](./packages/agent-cli): reusable Ink-based terminal chat UI (scrolling log + pinned bottom input) shared by the kits.
 
 ## Repository layout
 
@@ -29,7 +32,8 @@ agent-stack-ecosystem-kits/
 │   ├── openai-agents/
 │   └── vercel-ai/
 └── packages/
-    └── circle-tools/         # shared, framework-agnostic
+    ├── circle-tools/         # shared, framework-agnostic
+    └── agent-cli/            # shared terminal chat UI
 ```
 
 ## Prerequisites
@@ -52,7 +56,7 @@ This installs all workspace dependencies from the repo root. Each kit owns its o
 
 ## Demo use case
 
-Each kit demonstrates the same flow:
+Each kit's `bun run demo` launches an interactive terminal chat (a shared Ink-based UI with a scrolling log and a pinned input showing your live USDC balance) that demonstrates the same flow:
 
 1. Bootstrap with the [Circle Agent Skill](https://agents.circle.com/skills/setup.md) + CLI
    - Install CLI and skill
