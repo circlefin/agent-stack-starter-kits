@@ -1,5 +1,3 @@
-import { createInterface } from 'node:readline/promises';
-
 import {
   query,
   type CanUseTool,
@@ -7,6 +5,7 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import { createChatUi, type ChatUi } from '@agent-stack-ecosystem-kits/agent-cli';
 import { ensureSession } from '@agent-stack-ecosystem-kits/circle-tools';
 
 import { buildQueryOptions } from './agent';
@@ -15,8 +14,23 @@ import { SETUP_SKILL_URL } from './skill';
 import { bold, colorizeJson, dim, green, heading, kitLine, red, yellow } from './theme';
 import { SPEND_TOOLS } from './tools';
 
+// The chat UI pins the input to the bottom while logs scroll above it. It is
+// created in main(); the module-level handle lets the fatal handler close it
+// (restoring the console) before printing, and lets the log helpers below route
+// output into the scrollback once it exists.
+let ui: ChatUi | null = null;
+
+/** Emit a namespaced `[claude-agent-kit]` framework line to the scrollback. */
 function log(line: string): void {
-  console.log(kitLine(line));
+  const formatted = kitLine(line);
+  if (ui) ui.log(formatted);
+  else console.log(formatted);
+}
+
+/** Emit an already-formatted line (JSON, agent prose) verbatim. */
+function out(line: string): void {
+  if (ui) ui.log(line);
+  else console.log(line);
 }
 
 /** True when an error string is an Anthropic "Overloaded" (HTTP 529). The
@@ -42,8 +56,8 @@ function printAssistant(msg: Extract<SDKMessage, { type: 'assistant' }>): void {
   const blocks = Array.isArray(content) ? content : [];
   for (const block of blocks) {
     if (block.type === 'text' && block.text.trim()) {
-      console.log(`\n${heading('--- agent ---')}\n`);
-      console.log(block.text.trimEnd());
+      out(`\n${heading('--- agent ---')}\n`);
+      out(block.text.trimEnd());
     }
   }
 }
@@ -58,35 +72,33 @@ function printResult(msg: Extract<SDKMessage, { type: 'result' }>): void {
     if (msg.errors.some(isOverloaded)) {
       log(yellow('The LLM provider is overloaded (HTTP 529). This is transient; try again in a moment.'));
     }
-    for (const e of msg.errors) console.log(red(e));
+    for (const e of msg.errors) out(red(e));
   }
 }
 
 async function main(): Promise<void> {
+  // Pin the input to the bottom (Claude Code-style) while logs scroll above.
+  // Falls back to plain console + readline when stdout/stdin is not a TTY.
+  const chat = createChatUi({ title: heading('Autonomous Payment Agent') });
+  ui = chat;
+
   log('Autonomous Payment Agent demo starting');
   const config = loadConfig();
   log(`chain=BASE model=${config.model} auth=ANTHROPIC_API_KEY`);
   log(dim('tip: type "exit" at any prompt to quit'));
 
-  // Open readline only for the duration of a single question. Keeping it open
-  // across the whole session would leave it attached to the TTY in terminal
-  // mode while the agent streams, where any keystroke (or a stdout write racing
-  // its line-refresh) repaints its prompt mid-output. Open/close per prompt so
-  // readline never owns the TTY during streaming.
-  // `exit` typed at ANY prompt (chat input or an approval [y/N]) halts the demo
-  // immediately, before the answer reaches the caller.
+  // Every prompt (chat input, approval [y/N], email/OTP) flows through the same
+  // pinned input box the chat UI renders at the bottom of the terminal.
+  // `exit` typed at ANY prompt halts the demo immediately, tearing down the UI
+  // (which restores the console) before the answer reaches the caller.
   const ask = async (q: string): Promise<string> => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      const answer = await rl.question(q);
-      if (answer.trim().toLowerCase() === 'exit') {
-        log('exit, halting.');
-        process.exit(0);
-      }
-      return answer;
-    } finally {
-      rl.close();
+    const answer = await chat.ask(q);
+    if (answer.trim().toLowerCase() === 'exit') {
+      log('exit, halting.');
+      chat.close();
+      process.exit(0);
     }
+    return answer;
   };
 
   // Human-in-the-loop, the SDK-native mirror of LangChain's interruptOn: the
@@ -97,7 +109,7 @@ async function main(): Promise<void> {
       return { behavior: 'allow', updatedInput: input };
     }
     log(yellow(`approval required for tool: ${bold(toolName)}`));
-    console.log(colorizeJson(input));
+    out(colorizeJson(input));
     const answer = (await ask(bold('Approve this action? [y/N] '))).trim().toLowerCase();
     const approved = answer === 'y' || answer === 'yes';
     if (approved) {
@@ -149,6 +161,7 @@ async function main(): Promise<void> {
   await ensureSession({ ask, log, bold });
 
   log('invoking agent ...');
+  chat.setStatus('working…');
   const session = query({
     prompt: inputStream(),
     options: buildQueryOptions(config, canUseTool, ask),
@@ -162,23 +175,31 @@ async function main(): Promise<void> {
       printAssistant(msg);
     } else if (msg.type === 'result') {
       printResult(msg);
+      chat.setStatus(null);
       // A blank line is a stray Enter, not an intent to quit: re-prompt without
       // feeding the input stream. `exit` (handled in `ask`) and `quit` still halt.
-      let next = (await ask(`\n${bold('You:')}\n> `)).trim();
+      let next = (await ask('> ')).trim();
       while (!next) {
-        next = (await ask(`\n${bold('You:')}\n> `)).trim();
+        next = (await ask('> ')).trim();
       }
       if (next.toLowerCase() === 'quit') {
         log('done.');
         pushInput(null);
       } else {
+        chat.setStatus('working…');
         pushInput(userMessage(next));
       }
     }
   }
+
+  // Unmount the UI (and restore the patched console) so the process can exit.
+  chat.close();
 }
 
 main().catch((err: unknown) => {
+  // Tear down the UI first so the console is restored before we print the
+  // failure; otherwise these lines would be swallowed by the Ink frame.
+  ui?.close();
   const message = err instanceof Error ? err.message : String(err);
   // A 529 means the LLM provider is overloaded after retries were exhausted: it
   // is transient and not a kit bug, so say so plainly instead of dumping raw JSON.

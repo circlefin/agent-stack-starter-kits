@@ -1,7 +1,6 @@
-import { createInterface } from 'node:readline/promises';
-
 import { HumanMessage } from '@langchain/core/messages';
 import { Command } from '@langchain/langgraph';
+import { createChatUi, type ChatUi } from '@agent-stack-ecosystem-kits/agent-cli';
 import { ensureSession } from '@agent-stack-ecosystem-kits/circle-tools';
 
 import { buildAgent } from './agent';
@@ -9,8 +8,23 @@ import { loadConfig } from './config';
 import { SETUP_SKILL_URL } from './skill';
 import { bold, colorizeJson, dim, green, heading, kitLine, red, yellow } from './theme';
 
+// The chat UI pins the input to the bottom while logs scroll above it. It is
+// created in main(); the module-level handle lets the fatal handler close it
+// (restoring the console) before printing, and lets the log helpers below route
+// output into the scrollback once it exists.
+let ui: ChatUi | null = null;
+
+/** Emit a namespaced `[langchain-kit]` framework line to the scrollback. */
 function log(line: string): void {
-  console.log(kitLine(line));
+  const formatted = kitLine(line);
+  if (ui) ui.log(formatted);
+  else console.log(formatted);
+}
+
+/** Emit an already-formatted line (JSON, agent reply) verbatim. */
+function out(line: string): void {
+  if (ui) ui.log(line);
+  else console.log(line);
 }
 
 /** A tool call the agent paused on, awaiting human review. Shape is loose
@@ -71,7 +85,7 @@ async function reviewAction(
 ): Promise<Decision> {
   const name = actionName(req);
   log(yellow(`approval required for tool: ${bold(name)}`));
-  console.log(colorizeJson(actionArgs(req)));
+  out(colorizeJson(actionArgs(req)));
 
   const answer = (await ask(bold('Approve this action? [y/N] '))).trim().toLowerCase();
   const approved = answer === 'y' || answer === 'yes';
@@ -131,12 +145,17 @@ function printFinal(result: AgentResult): void {
       ? content
       : colorizeJson(content);
 
-  console.log(`\n${heading('--- agent reply ---')}\n`);
-  console.log(finalContent);
-  console.log(`\n${heading('-------------------')}`);
+  out(`\n${heading('--- agent reply ---')}\n`);
+  out(finalContent);
+  out(`\n${heading('-------------------')}`);
 }
 
 async function main(): Promise<void> {
+  // Pin the input to the bottom (Claude Code-style) while logs scroll above.
+  // Falls back to plain console + readline when stdout/stdin is not a TTY.
+  const chat = createChatUi({ title: heading('Autonomous Payment Agent') });
+  ui = chat;
+
   log('Autonomous Payment Agent demo starting');
   const config = loadConfig();
   log(`chain=BASE provider=${config.provider} model=${config.model}`);
@@ -152,25 +171,18 @@ async function main(): Promise<void> {
   // by the MemorySaver checkpointer carries across the whole session.
   const runConfig: RunConfig = { configurable: { thread_id: `demo-${Date.now()}` } };
 
-  // Open readline only for the duration of a single question. Keeping it open
-  // across the whole session would leave it attached to the TTY in terminal
-  // mode while the agent streams, where any keystroke (or a stdout write racing
-  // its line-refresh) repaints its prompt mid-output. Open/close per prompt so
-  // readline never owns the TTY during streaming.
-  // `exit` typed at ANY prompt (chat input or an approval [y/N]) halts the
-  // demo immediately, before the answer reaches the caller.
+  // Every prompt (chat input, approval [y/N], email/OTP) flows through the same
+  // pinned input box the chat UI renders at the bottom of the terminal.
+  // `exit` typed at ANY prompt halts the demo immediately, tearing down the UI
+  // (which restores the console) before the answer reaches the caller.
   const ask = async (q: string): Promise<string> => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      const answer = await rl.question(q);
-      if (answer.trim().toLowerCase() === 'exit') {
-        log('exit, halting.');
-        process.exit(0);
-      }
-      return answer;
-    } finally {
-      rl.close();
+    const answer = await chat.ask(q);
+    if (answer.trim().toLowerCase() === 'exit') {
+      log('exit, halting.');
+      chat.close();
+      process.exit(0);
     }
+    return answer;
   };
 
   // Inline auth: make sure the CLI has a valid agent session before the agent
@@ -196,11 +208,13 @@ async function main(): Promise<void> {
 
   while (true) {
     if (input) {
+      chat.setStatus('working…');
       const result = await runTurn(agent, input, runConfig, ask);
+      chat.setStatus(null);
       printFinal(result);
     }
 
-    const next = (await ask(`\n${bold('You:')}\n> `)).trim();
+    const next = (await ask('> ')).trim();
     if (next.toLowerCase() === 'quit') {
       log('done.');
       break;
@@ -209,9 +223,15 @@ async function main(): Promise<void> {
     // running a turn. `exit` (handled in `ask`) and `quit` still halt.
     input = next ? { messages: [new HumanMessage(next)] } : null;
   }
+
+  // Unmount the UI (and restore the patched console) so the process can exit.
+  chat.close();
 }
 
 main().catch((err: unknown) => {
+  // Tear down the UI first so the console is restored before we print the
+  // failure; otherwise these lines would be swallowed by the Ink frame.
+  ui?.close();
   const message = err instanceof Error ? err.message : String(err);
   // A 529 means the LLM provider is overloaded after exhausting retries: it is
   // transient and not a kit bug, so say so plainly instead of dumping raw JSON.

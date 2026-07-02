@@ -1,7 +1,6 @@
-import { createInterface } from 'node:readline/promises';
-
 import { InMemoryRunner, isFinalResponse, LogLevel, setLogLevel, type Event } from '@google/adk';
 import type { Content } from '@google/genai';
+import { createChatUi, type ChatUi } from '@agent-stack-ecosystem-kits/agent-cli';
 import { ensureSession } from '@agent-stack-ecosystem-kits/circle-tools';
 
 import { buildAgent, type ApprovalFn } from './agent';
@@ -17,8 +16,23 @@ const USER_ID = 'demo-user';
 // Clamp to WARN so framework errors still surface but the chat output stays clean.
 setLogLevel(LogLevel.WARN);
 
+// The chat UI pins the input to the bottom while logs scroll above it. It is
+// created in main(); the module-level handle lets the fatal handler close it
+// (restoring the console) before printing, and lets the log helpers below route
+// output into the scrollback once it exists.
+let ui: ChatUi | null = null;
+
+/** Emit a namespaced `[adk-kit]` framework line to the scrollback. */
 function log(line: string): void {
-  console.log(kitLine(line));
+  const formatted = kitLine(line);
+  if (ui) ui.log(formatted);
+  else console.log(formatted);
+}
+
+/** Emit an already-formatted line (JSON, agent reply) verbatim. */
+function out(line: string): void {
+  if (ui) ui.log(line);
+  else console.log(line);
 }
 
 /**
@@ -39,30 +53,28 @@ function userMessage(text: string): Content {
 }
 
 async function main(): Promise<void> {
+  // Pin the input to the bottom (Claude Code-style) while logs scroll above.
+  // Falls back to plain console + readline when stdout/stdin is not a TTY.
+  const chat = createChatUi({ title: heading('Autonomous Payment Agent') });
+  ui = chat;
+
   log('Autonomous Payment Agent demo starting');
   const config = loadConfig();
   log(`chain=BASE model=${config.model} auth=GOOGLE_API_KEY`);
   log(dim('tip: type "exit" at any prompt to quit'));
 
-  // Open readline only for the duration of a single question. Keeping it open
-  // across the whole session would leave it attached to the TTY in terminal
-  // mode while the agent streams, where any keystroke (or a stdout write racing
-  // its line-refresh) repaints its prompt mid-output. Open/close per prompt so
-  // readline never owns the TTY during streaming.
-  // `exit` typed at ANY prompt (chat input or an approval [y/N]) halts the demo
-  // immediately, before the answer reaches the caller.
+  // Every prompt (chat input, approval [y/N], email/OTP) flows through the same
+  // pinned input box the chat UI renders at the bottom of the terminal.
+  // `exit` typed at ANY prompt halts the demo immediately, tearing down the UI
+  // (which restores the console) before the answer reaches the caller.
   const ask = async (q: string): Promise<string> => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      const answer = await rl.question(q);
-      if (answer.trim().toLowerCase() === 'exit') {
-        log('exit, halting.');
-        process.exit(0);
-      }
-      return answer;
-    } finally {
-      rl.close();
+    const answer = await chat.ask(q);
+    if (answer.trim().toLowerCase() === 'exit') {
+      log('exit, halting.');
+      chat.close();
+      process.exit(0);
     }
+    return answer;
   };
 
   // Human-in-the-loop, the ADK-native mirror of LangChain's interruptOn: the
@@ -70,7 +82,7 @@ async function main(): Promise<void> {
   // approval prompt; every other tool runs without a pause.
   const approve: ApprovalFn = async (toolName, args) => {
     log(yellow(`approval required for tool: ${bold(toolName)}`));
-    console.log(colorizeJson(args));
+    out(colorizeJson(args));
     const answer = (await ask(bold('Approve this action? [y/N] '))).trim().toLowerCase();
     const approved = answer === 'y' || answer === 'yes';
     log(approved ? green('approved by user') : red('rejected by user'));
@@ -105,6 +117,7 @@ async function main(): Promise<void> {
 
   while (true) {
     if (input) {
+      chat.setStatus('working…');
       for await (const event of runner.runAsync({
         userId: USER_ID,
         sessionId: session.id,
@@ -118,13 +131,14 @@ async function main(): Promise<void> {
         if (!isFinalResponse(event)) continue;
         const text = extractText(event);
         if (!text) continue;
-        console.log(`\n${heading('--- agent reply ---')}\n`);
-        console.log(text);
-        console.log(`\n${heading('-------------------')}`);
+        out(`\n${heading('--- agent reply ---')}\n`);
+        out(text);
+        out(`\n${heading('-------------------')}`);
       }
+      chat.setStatus(null);
     }
 
-    const next = (await ask(`\n${bold('You:')}\n> `)).trim();
+    const next = (await ask('> ')).trim();
     if (next.toLowerCase() === 'quit') {
       log('done.');
       break;
@@ -133,9 +147,15 @@ async function main(): Promise<void> {
     // running a turn. `exit` (handled in `ask`) and `quit` still halt.
     input = next ? userMessage(next) : null;
   }
+
+  // Unmount the UI (and restore the patched console) so the process can exit.
+  chat.close();
 }
 
 main().catch((err: unknown) => {
+  // Tear down the UI first so the console is restored before we print the
+  // failure; otherwise these lines would be swallowed by the Ink frame.
+  ui?.close();
   const message = err instanceof Error ? err.message : String(err);
   console.error(kitLine(red(`FATAL: ${message}`)));
   process.exit(1);

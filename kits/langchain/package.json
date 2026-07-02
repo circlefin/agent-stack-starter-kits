@@ -14,6 +14,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "@agent-stack-ecosystem-kits/agent-cli": "workspace:*",
     "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
     "@langchain/anthropic": "^1.3.26",
     "@langchain/core": "^1.1.44",

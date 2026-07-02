@@ -1,7 +1,7 @@
 import 'dotenv/config';
-import { createInterface } from 'node:readline/promises';
 import type { CoreMessage } from 'ai';
 
+import { createChatUi, type ChatUi } from '@agent-stack-ecosystem-kits/agent-cli';
 import { ensureSession } from '@agent-stack-ecosystem-kits/circle-tools';
 import { loadConfig, type KitConfig } from './config';
 import { runTurn } from './agent';
@@ -10,8 +10,17 @@ import { withRetry } from './retry';
 import { SETUP_SKILL_URL } from './skill';
 import { bold, dim, kitLine, red, yellow } from './theme';
 
+// The chat UI pins the input to the bottom while logs scroll above it. It is
+// created in main(); the module-level handle lets the fatal handler close it
+// (restoring the console) before printing, and lets the log helper below route
+// output into the scrollback once it exists.
+let ui: ChatUi | null = null;
+
+/** Emit a namespaced `[vercel-kit]` framework line to the scrollback. */
 function log(line: string): void {
-  console.log(kitLine(line));
+  const formatted = kitLine(line);
+  if (ui) ui.log(formatted);
+  else console.log(formatted);
 }
 
 /**
@@ -41,26 +50,29 @@ async function runAgentTurn(
 }
 
 async function main(): Promise<void> {
-  log('Autonomous Payment Agent demo starting');
-  const config = loadConfig();
-  log(`chain=${config.chain} provider=${config.provider} model=${config.model}`);
-  log(dim('tip: type "exit" at any prompt to quit'));
+  // Pin the input to the bottom (Claude Code-style) while logs scroll above.
+  // Falls back to plain console + readline when stdout/stdin is not a TTY.
+  const chat = createChatUi({ title: bold('Autonomous Payment Agent') });
+  ui = chat;
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-
-  // Shared `ask` that routes all prompts through the readline and supports the
-  // "exit" escape hatch at any point (auth, approval, follow-up chat).
+  // Shared `ask` that routes every prompt through the pinned input box and
+  // supports the "exit" escape hatch at any point (auth, approval, follow-up).
   const ask = async (question: string): Promise<string> => {
-    const answer = await rl.question(question);
+    const answer = await chat.ask(question);
     if (answer.trim().toLowerCase() === 'exit') {
       log('exit, halting.');
-      rl.close();
+      chat.close();
       process.exit(0);
     }
     return answer;
   };
 
   try {
+    log('Autonomous Payment Agent demo starting');
+    const config = loadConfig();
+    log(`chain=${config.chain} provider=${config.provider} model=${config.model}`);
+    log(dim('tip: type "exit" at any prompt to quit'));
+
     // ── Auth ─────────────────────────────────────────────────────────────────
     // Check the Circle CLI session before running the agent. Logs in with email
     // + OTP if needed; never auto-accepts Circle Terms of Use.
@@ -84,7 +96,9 @@ async function main(): Promise<void> {
     const tools = buildTools(ask);
 
     log('invoking agent ...');
+    chat.setStatus('working…');
     const { responseMessages } = await runAgentTurn(config, messages, tools);
+    chat.setStatus(null);
     messages = [...messages, ...responseMessages];
 
     // ── REPL ──────────────────────────────────────────────────────────────────
@@ -94,7 +108,7 @@ async function main(): Promise<void> {
     log('bootstrap complete — continue the conversation or type "exit" to quit');
 
     while (true) {
-      const input = (await ask(`\n${bold('You:')}\n> `)).trim();
+      const input = (await ask('> ')).trim();
       if (input.toLowerCase() === 'quit') {
         log('done.');
         break;
@@ -104,10 +118,15 @@ async function main(): Promise<void> {
       if (!input) continue;
       messages.push({ role: 'user', content: input });
 
+      chat.setStatus('working…');
       const { responseMessages: nextMessages } = await runAgentTurn(config, messages, tools);
+      chat.setStatus(null);
       messages = [...messages, ...nextMessages];
     }
   } catch (err: unknown) {
+    // Tear down the UI first so the console is restored before we print the
+    // failure; otherwise these lines would be swallowed by the Ink frame.
+    chat.close();
     const message = err instanceof Error ? err.message : String(err);
     const overloaded =
       (err as { status?: number })?.status === 529 || message.includes('529');
@@ -121,7 +140,8 @@ async function main(): Promise<void> {
     }
     process.exitCode = 1;
   } finally {
-    rl.close();
+    // Idempotent: a no-op if the catch above (or the exit path) already closed it.
+    chat.close();
   }
 }
 
