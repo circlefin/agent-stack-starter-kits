@@ -25,3 +25,4 @@ bun.lockb
 .idea/
 *.swp
 .DS_Store
+*.tape
