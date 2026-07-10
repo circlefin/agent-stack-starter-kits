@@ -9,6 +9,19 @@
         "typescript": "^5.5.0",
       },
     },
+    "kits/bufi-on-shrooms": {
+      "name": "@agent-stack-ecosystem-kits/kit-bufi-on-shrooms",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent-stack-ecosystem-kits/agent-cli": "workspace:*",
+        "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
+        "dotenv": "^17.4.2",
+      },
+      "devDependencies": {
+        "@types/node": "^20.14.0",
+        "typescript": "^5.5.0",
+      },
+    },
     "kits/claude-agent-sdk": {
       "name": "@agent-stack-ecosystem-kits/kit-claude-agent-sdk",
       "version": "0.0.0",
@@ -135,6 +148,8 @@
     "@agent-stack-ecosystem-kits/agent-cli": ["@agent-stack-ecosystem-kits/agent-cli@workspace:packages/agent-cli"],
 
     "@agent-stack-ecosystem-kits/circle-tools": ["@agent-stack-ecosystem-kits/circle-tools@workspace:packages/circle-tools"],
+
+    "@agent-stack-ecosystem-kits/kit-bufi-on-shrooms": ["@agent-stack-ecosystem-kits/kit-bufi-on-shrooms@workspace:kits/bufi-on-shrooms"],
 
     "@agent-stack-ecosystem-kits/kit-claude-agent-sdk": ["@agent-stack-ecosystem-kits/kit-claude-agent-sdk@workspace:kits/claude-agent-sdk"],
 
