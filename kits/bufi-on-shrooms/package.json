@@ -9,6 +9,7 @@
   },
   "scripts": {
     "demo": "bun run src/index.ts",
+    "test": "bun test src",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist *.tsbuildinfo"
@@ -16,9 +17,12 @@
   "dependencies": {
     "@agent-stack-ecosystem-kits/agent-cli": "workspace:*",
     "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
+    "@agent-stack-ecosystem-kits/kit-vercel-ai": "workspace:*",
+    "ai": "^4.3.0",
     "dotenv": "^17.4.2"
   },
   "devDependencies": {
+    "@types/bun": "latest",
     "@types/node": "^20.14.0",
     "typescript": "^5.5.0"
   }

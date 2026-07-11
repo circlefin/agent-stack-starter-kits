@@ -17,7 +17,9 @@ cp kits/bufi-on-shrooms/.env.example kits/bufi-on-shrooms/.env
 bun run --cwd kits/bufi-on-shrooms demo
 ```
 
-The demo is safe by default. It reads Circle wallet state and service discovery metadata. Any future USDC-spending tool must keep human approval inside the tool execution boundary, following the existing `kits/vercel-ai` pattern.
+The kit composes the complete Vercel AI Circle roster: authentication, setup/sub-skills, wallet create/list/balance/deploy/fund, fiat funding links, service search/inspect/fetch, custom free-service calls, Gateway balance/deposit, and x402 payment. The two paid tools retain the Vercel kit's in-tool human approval boundary; declining returns a denial result before any payment or deposit call.
+
+The terminal emits bounded metadata-only step traces (sequence, finish reason, tool-call count, and text length). It deliberately does not copy prompts, model text, credentials, or tool payloads into the trace buffer. A browser product can replace this emitter with its own durable trace sink.
 
 ## Why this exists
 
@@ -25,7 +27,7 @@ BUFI's product surface is a browser and mobile agent workspace, but the public c
 
 1. Circle wallet and x402 tools stay framework-agnostic.
 2. The terminal console is a developer surface, similar to Stripe CLI, not a raw log stream.
-3. Agent workspace traces and workflow state should be readable as first-class events.
+3. Agent workspace traces and workflow state are readable as first-class, redacted events.
 4. Branding is theme-level only; it does not leak private APIs or tenant assumptions.
 
 ## Upstream PR boundary
@@ -33,8 +35,10 @@ BUFI's product surface is a browser and mobile agent workspace, but the public c
 Safe upstream candidates:
 
 - A branded-kit example that composes `circle-tools` and `agent-cli`.
-- Better Vercel AI SDK docs around tool-contained approvals.
-- A theme hook for console labels and JSON highlighting.
+- Vercel AI SDK exports for composing its complete tool roster in other kits.
+- A consumer logger hook for branded consoles.
+- Framework-neutral step hooks for trace surfaces.
+- A missing `call_free_service` parity tool for GET-query and POST-body free endpoints.
 
 BUFI-private follow-up outside this repo:
 

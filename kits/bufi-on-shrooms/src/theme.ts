@@ -31,20 +31,48 @@ export const violet = sgr(35, 39);
 export const cyan = sgr(36, 39);
 export const gray = sgr(90, 39);
 
+export function colorizeJson(value: unknown, indent = 2): string {
+  let json: string;
+  if (typeof value === "string") {
+    try {
+      json = JSON.stringify(JSON.parse(value), null, indent);
+    } catch {
+      return value;
+    }
+  } else {
+    json = JSON.stringify(value, null, indent);
+  }
+  if (json === undefined) return String(value);
+  if (!enabled) return json;
+  return json.replace(
+    /("(?:\\.|[^\\"])*")(\s*:)?|\b(true|false)\b|\b(null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    (full, str, colon, bool, nul, num) => {
+      if (str !== undefined)
+        return colon !== undefined ? cyan(str) + colon : green(str);
+      if (bool !== undefined) return yellow(bool);
+      if (nul !== undefined) return gray(nul);
+      if (num !== undefined) return violet(num);
+      return full;
+    },
+  );
+}
+
 export function bufiLine(line: string): string {
-  return `${dim(violet('[bufi-workspace]'))} ${line}`;
+  return `${dim(violet("[bufi-on-shrooms]"))} ${line}`;
 }
 
 export function toolLine(line: string): string {
-  const prefix = dim(cyan('[tool]'));
+  const prefix = dim(cyan("[tool]"));
   const m = /^(\S+)([\s\S]*)$/.exec(line);
   if (!m) return `${prefix} ${line}`;
-  const name = bold(m[1] ?? '');
-  const rest = m[2] ?? '';
-  const fail = rest.indexOf('x');
-  if (fail >= 0) return `${prefix} ${name}${rest.slice(0, fail)}${red('x')}${red(rest.slice(fail + 1))}`;
-  const hit = rest.indexOf('<-');
-  if (hit >= 0) return `${prefix} ${name}${rest.slice(0, hit)}${green('<-')}${dim(rest.slice(hit + 2))}`;
+  const name = bold(m[1] ?? "");
+  const rest = m[2] ?? "";
+  const fail = rest.indexOf("✗");
+  if (fail >= 0)
+    return `${prefix} ${name}${rest.slice(0, fail)}${red("✗")}${red(rest.slice(fail + 1))}`;
+  const hit = rest.indexOf("←");
+  if (hit >= 0)
+    return `${prefix} ${name}${rest.slice(0, hit)}${green("←")}${dim(rest.slice(hit + 1))}`;
   return `${prefix} ${name}${rest.replace(/(\b\w+)=/g, (_w, k) => `${gray(k)}=`)}`;
 }
 

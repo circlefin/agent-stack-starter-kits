@@ -13,6 +13,13 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
+  "exports": {
+    "./agent": "./src/agent.ts",
+    "./config": "./src/config.ts",
+    "./retry": "./src/retry.ts",
+    "./skill": "./src/skill.ts",
+    "./tools": "./src/tools.ts"
+  },
   "dependencies": {
     "@agent-stack-ecosystem-kits/agent-cli": "workspace:*",
     "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
