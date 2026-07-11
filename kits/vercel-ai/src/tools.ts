@@ -53,8 +53,13 @@ export type AskFn = (q: string) => Promise<string>;
 
 const CHAIN = (process.env['CIRCLE_CHAIN'] ?? DEFAULT_CHAIN) as Chain;
 
-function log(line: string): void {
+function defaultLog(line: string): void {
   console.log(toolLine(line));
+}
+
+export interface ToolBuildOptions {
+  /** Optional consumer logger for branded consoles and trace surfaces. */
+  log?: (line: string) => void;
 }
 
 function preview(value: string, max = 120): string {
@@ -85,7 +90,8 @@ function toolError(e: unknown): { error: string } {
  * the tool itself, rather than in an external hook like LangChain's
  * `interruptOn` or the Claude Agent SDK's `canUseTool`.
  */
-export function buildTools(ask: AskFn) {
+export function buildTools(ask: AskFn, options: ToolBuildOptions = {}) {
+  const log = options.log ?? defaultLog;
   const subSkillEnum = z.enum(SUB_SKILL_NAMES as [SubSkillName, ...SubSkillName[]]);
   const subSkillCatalog = SUB_SKILL_NAMES.map((n) => `- ${n} → ${SUB_SKILLS[n]}`).join('\n');
 
@@ -307,7 +313,10 @@ export function buildTools(ask: AskFn) {
         'complete, confirm with circle_get_balance. Mainnet only.',
       parameters: z.object({
         address: z.string().describe('Destination agent wallet address (0x...).'),
-        amount: z.number().positive().describe('Amount of token to buy, in human units (e.g. 10 for $10 of USDC).'),
+        amount: z
+          .number()
+          .positive()
+          .describe('Amount of token to buy, in human units (e.g. 10 for $10 of USDC).'),
         chain: z
           .enum(['BASE', 'POLYGON'])
           .optional()
@@ -318,9 +327,17 @@ export function buildTools(ask: AskFn) {
           .describe('Token to buy. Defaults to usdc.'),
       }),
       execute: async ({ address, amount, chain, token }) => {
-        log(`circle_fund_fiat address=${address} amount=${amount} chain=${chain ?? 'BASE'} token=${token ?? 'usdc'}`);
+        log(
+          `circle_fund_fiat address=${address} amount=${amount} chain=${chain ?? 'BASE'} token=${token ?? 'usdc'}`,
+        );
         try {
-          const result = await fundWalletFiat({ address, amount, chain: chain as Chain | undefined, token, open: true });
+          const result = await fundWalletFiat({
+            address,
+            amount,
+            chain: chain as Chain | undefined,
+            token,
+            open: true,
+          });
           log(`circle_fund_fiat ← ${preview(result.url, 80)}`);
           return result;
         } catch (e) {
@@ -398,6 +415,48 @@ export function buildTools(ask: AskFn) {
       },
     }),
 
+    call_free_service: tool({
+      description:
+        'Call a free (no-payment) HTTP endpoint with GET query parameters or a POST JSON body. ' +
+        'Prefer fetch_service for simple GET probing because it detects HTTP 402. This tool ' +
+        'never attaches a payment signature.',
+      parameters: z.object({
+        url: z.string().url().describe('The free service endpoint URL.'),
+        method: z.enum(['GET', 'POST']).default('GET'),
+        params: z.record(z.string(), z.unknown()).optional(),
+      }),
+      execute: async ({ url: rawUrl, method, params }) => {
+        const url = new URL(rawUrl);
+        if (!['https:', 'http:'].includes(url.protocol)) {
+          return { error: 'Only HTTP(S) free-service URLs are supported.' };
+        }
+        log(`call_free_service url=${url.toString()} method=${method}`);
+        try {
+          const init: RequestInit = { method };
+          if (method === 'GET' && params) {
+            for (const [key, value] of Object.entries(params)) {
+              url.searchParams.set(key, String(value));
+            }
+          } else if (method === 'POST' && params) {
+            init.headers = { 'Content-Type': 'application/json' };
+            init.body = JSON.stringify(params);
+          }
+          const response = await fetch(url, init);
+          const body = await response.text();
+          if (!response.ok) throw new Error(`HTTP ${response.status}: ${preview(body)}`);
+          log(`call_free_service ← HTTP ${response.status} ${body.length} bytes`);
+          return {
+            status: response.status,
+            contentType: response.headers.get('content-type'),
+            body,
+          };
+        } catch (e) {
+          log(`call_free_service ✗ ${(e as Error).message}`);
+          return toolError(e);
+        }
+      },
+    }),
+
     circle_get_gateway_balance: tool({
       description:
         "Check the wallet's Base Circle Gateway balance: the off-chain batched-payment pool, " +
@@ -430,7 +489,8 @@ export function buildTools(ask: AskFn) {
 
     circle_pay_service: tool({
       description:
-        'Pay for an x402 service with a Circle USDC payment on Base. The kit reads the ' +
+        'Pay for an x402 service with a Circle USDC payment on Base. Always pauses for ' +
+        'explicit human approval before spending. The kit reads the ' +
         "service's published payment options and pays under the right scheme automatically: " +
         'vanilla x402, or Circle Gateway when the seller requires it. If the seller requires ' +
         'Gateway and the wallet has no Gateway balance, this fails with an actionable ' +
@@ -477,7 +537,9 @@ export function buildTools(ask: AskFn) {
         try {
           accepts = await getServiceAccepts(url, httpMethod);
         } catch (e) {
-          log(`circle_pay_service ✗ could not read seller's payment options: ${(e as Error).message}`);
+          log(
+            `circle_pay_service ✗ could not read seller's payment options: ${(e as Error).message}`,
+          );
           return toolError(e);
         }
         if (accepts.options.length === 0) {
@@ -504,7 +566,12 @@ export function buildTools(ask: AskFn) {
         }
 
         try {
-          const result = await payService({ url, address, data, method: httpMethod });
+          const result = await payService({
+            url,
+            address,
+            data,
+            method: httpMethod,
+          });
           const tx = (result as { txHash?: string }).txHash
             ? ` txHash=${(result as { txHash?: string }).txHash}`
             : '';
@@ -520,7 +587,8 @@ export function buildTools(ask: AskFn) {
     circle_gateway_deposit: tool({
       description:
         "Fund the wallet's Circle Gateway balance so it can pay a seller that requires " +
-        'Gateway (batched) x402 payments. Pass the service URL; the kit confirms the seller ' +
+        'Gateway (batched) x402 payments. Always pauses for explicit human approval. ' +
+        'Pass the service URL; the kit confirms the seller ' +
         'requires Gateway, then deposits USDC. Spends USDC (the deposit amount plus fee). ' +
         'After it succeeds, retry circle_pay_service for the same URL. ' +
         'Use deposit_method="eco" (default) for Base→Polygon Gateway: ~30-50 s settlement, ' +
@@ -558,11 +626,21 @@ export function buildTools(ask: AskFn) {
       execute: async ({ url, address, method, deposit_method, amount }) => {
         const httpMethod = (method ?? 'GET').toUpperCase();
         const depositMethod = deposit_method ?? 'eco';
-        log(`circle_gateway_deposit url=${url} address=${address} amount=${amount} deposit_method=${depositMethod}`);
+        log(
+          `circle_gateway_deposit url=${url} address=${address} amount=${amount} deposit_method=${depositMethod}`,
+        );
 
         // ── Human-in-the-loop ──────────────────────────────────────────────
         console.log(`\n${yellow('⚠')}  ${bold('approval required:')} circle_gateway_deposit`);
-        console.log(colorizeJson({ url, address, method: httpMethod, deposit_method: depositMethod, amount }));
+        console.log(
+          colorizeJson({
+            url,
+            address,
+            method: httpMethod,
+            deposit_method: depositMethod,
+            amount,
+          }),
+        );
         const answer = (await ask(`${bold('Approve? [y/N]')} `)).trim().toLowerCase();
         if (answer !== 'y') {
           log(red('circle_gateway_deposit ✗ rejected by user'));
@@ -586,8 +664,14 @@ export function buildTools(ask: AskFn) {
         }
 
         try {
-          const result = await gatewayDeposit({ address, amount, method: depositMethod });
-          log(`circle_gateway_deposit ← ${result.amount} USDC via ${depositMethod} tx=${result.txId ?? 'n/a'}`);
+          const result = await gatewayDeposit({
+            address,
+            amount,
+            method: depositMethod,
+          });
+          log(
+            `circle_gateway_deposit ← ${result.amount} USDC via ${depositMethod} tx=${result.txId ?? 'n/a'}`,
+          );
           return result;
         } catch (e) {
           log(`circle_gateway_deposit ✗ ${(e as Error).message}`);

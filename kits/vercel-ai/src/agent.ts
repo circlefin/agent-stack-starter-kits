@@ -24,6 +24,17 @@ import type { KitConfig, ProviderConfig } from './config';
 import type { CircleTools } from './tools';
 import { heading, kitLine, yellow } from './theme';
 
+export interface RunTurnStepEvent {
+  step: number;
+  finishReason: string;
+  toolCallCount: number;
+  text: string;
+}
+
+export interface RunTurnOptions {
+  onStep?: (event: RunTurnStepEvent) => void | Promise<void>;
+}
+
 /**
  * Pick the Vercel AI SDK LanguageModel based on the detected provider.
  *
@@ -57,6 +68,7 @@ export async function runTurn(
   config: ProviderConfig,
   messages: CoreMessage[],
   tools: CircleTools,
+  options: RunTurnOptions = {},
 ): Promise<{ text: string; responseMessages: CoreMessage[] }> {
   const model = pickModel(config);
 
@@ -69,6 +81,12 @@ export async function runTurn(
     maxSteps: 30,
     onStepFinish: ({ text, toolCalls, finishReason }) => {
       stepCount++;
+      void options.onStep?.({
+        step: stepCount,
+        finishReason,
+        toolCallCount: toolCalls.length,
+        text,
+      });
       // Print any prose the model emitted in this step. Tool calls are logged
       // inside each tool's execute function, so we only need to surface text.
       if (text.trim()) {
@@ -77,7 +95,9 @@ export async function runTurn(
       // Surface a warning when the cap is reached so users understand why the
       // agent stopped mid-task rather than silently abandoning work.
       if (finishReason === 'length' && toolCalls.length > 0) {
-        console.log(kitLine(yellow(`step cap reached (${stepCount} steps) — agent may be incomplete`)));
+        console.log(
+          kitLine(yellow(`step cap reached (${stepCount} steps) — agent may be incomplete`)),
+        );
       }
     },
   });
