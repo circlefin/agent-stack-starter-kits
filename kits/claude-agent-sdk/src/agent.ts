@@ -16,41 +16,75 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { homedir } from 'node:os';
+
 import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
+import { buildInstructions } from '@agent-stack-starter-kits/kit-core';
 
 import type { KitConfig } from './config';
 import { dim, red } from './theme';
-import { buildCircleServer, MCP_SERVER_NAME } from './tools';
 
 /**
- * Build the Claude Agent SDK `query` options for the Autonomous Payment Agent.
+ * The tool this kit gates on. The SDK's own Bash tool, not one of ours: this is
+ * the kit where the shell was already in the box, so the sensible thing is to
+ * use it rather than ship a second one alongside.
+ */
+export const SHELL_TOOL = 'Bash';
+
+/**
+ * What the agent may use.
  *
- * The agent's only tools are the in-process Circle MCP server (skill fetch +
- * wallet/service/x402 wrappers); built-in tools are switched off (`tools: []`)
- * so the run is a clean, apples-to-apples mirror of the LangChain kit. There is
- * no hand-written system prompt: the bootstrap prompt plus setup.md drive the
- * flow.
+ * Four of the other five kits build a shell, a file reader and a grep out of
+ * `kit-core` because their frameworks have none — the LangChain kit is the
+ * exception, using Deep Agents' built-in file tools next to a `kit-core` shell.
+ * This one does not have to build anything: Bash, Read,
+ * Grep and Glob are the SDK's built-ins, they behave the way Claude Code's do,
+ * and using them is most of the reason to reach for this SDK. The list is still
+ * closed — nothing here writes, edits or deletes through a tool, because the
+ * shell does all of that under the gate below.
+ */
+const TOOLS = [SHELL_TOOL, 'Read', 'Grep', 'Glob'];
+
+/**
+ * Everything except the shell runs unprompted; `canUseTool` never sees these.
+ * Derived from `TOOLS` rather than listed again, so a tool added to one list
+ * cannot silently miss the other.
+ */
+const AUTO_ALLOWED = TOOLS.filter((tool) => tool !== SHELL_TOOL);
+
+/**
+ * Build the Claude Agent SDK `query` options.
  *
- * Human-in-the-loop is `canUseTool`, the SDK-native equivalent of LangChain
- * Deep Agents' `interruptOn`. It is the single permission decision point: the
- * entry point's handler approves read-only tools automatically and pauses for a
- * y/N on the two USDC-spending tools. `settingSources: []` isolates the run
- * from any filesystem settings (no ~/.claude or project config bleed-through).
+ * There is no tool layer here and no playbook. The system prompt is `kit-core`'s:
+ * a line of identity, three rules for working a terminal, and an index of the
+ * Circle skills installed on this machine. Everything about wallets, x402 and
+ * payment comes from those skill documents, which the agent reads with the same
+ * Read tool it reads anything else with.
+ *
+ * `settingSources: []` keeps the run isolated from the host's own Claude Code
+ * configuration: no `~/.claude` settings, no project CLAUDE.md, no inherited
+ * permission rules. What a user has installed for their editor should not
+ * quietly change what this demo does. The Circle skills still arrive, because
+ * `kit-core` reads them off disk itself rather than through the SDK's own skill
+ * discovery — which is what keeps this kit's behaviour identical to the other
+ * five, and what makes the six comparable at all.
  *
  * The `stderr` callback is wired so the spawned Claude Code subprocess is never
  * silent: by default the SDK discards its stderr, so a startup failure (auth,
- * CLI extraction) looks like an indefinite freeze. Surfacing it turns any such
- * failure into a visible diagnostic instead.
+ * CLI extraction) looks like an indefinite freeze.
  */
-export function buildQueryOptions(
+export async function buildQueryOptions(
   config: KitConfig,
   canUseTool: CanUseTool,
-  ask: (q: string) => Promise<string>,
-): Options {
+): Promise<Options> {
   return {
     model: config.model,
-    mcpServers: { [MCP_SERVER_NAME]: buildCircleServer(ask) },
-    tools: [],
+    systemPrompt: await buildInstructions(),
+    tools: TOOLS,
+    allowedTools: AUTO_ALLOWED,
+    // Where the user's own terminal would be, and where a global skill install
+    // expects to land.
+    cwd: homedir(),
     canUseTool,
     permissionMode: 'default',
     settingSources: [],

@@ -16,7 +16,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
+
+/** Cap on captured stdout/stderr, mirroring the old `maxBuffer`. */
+const MAX_OUTPUT_CHARS = 10 * 1024 * 1024;
 
 export interface CliOptions {
   /** Append `--output json` if not already present. */
@@ -69,12 +73,28 @@ function isTransientFailure(detail: string): boolean {
 }
 
 /**
- * Block the thread for `ms`. `runCircle` is already synchronous (`execFileSync`),
- * so the retry backoff stays synchronous too. `Atomics.wait` sleeps without a
- * busy-loop and without needing the call site to become async.
+ * Node's process warnings — `(node:1234) [DEP0040] DeprecationWarning: …` and the
+ * `(Use \`node --trace-deprecation …\`)` hint that follows — which the CLI's own
+ * dependencies emit on stderr at startup, on every run, success or failure.
  */
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const NODE_WARNING_LINE = /^\(node:\d+\)|^\(Use `node /;
+
+/**
+ * Drop Node's own warnings from captured stderr.
+ *
+ * Failure messages are built from stderr, so those warnings were being prepended
+ * to every CLI error: the real cause ended up as the last line of a block whose
+ * first two lines are unrelated boilerplate, both for a human reading the log and
+ * for an agent reading the tool result. Only the noise lines are removed, and
+ * only from the text used to explain the failure — `CircleCliError.stderr` still
+ * carries the raw stream for anyone who wants it.
+ */
+function withoutNodeWarnings(stderr: string): string {
+  return stderr
+    .split('\n')
+    .filter((line) => !NODE_WARNING_LINE.test(line.trimStart()))
+    .join('\n')
+    .trim();
 }
 
 export class CircleCliError extends Error {
@@ -91,15 +111,102 @@ export class CircleCliError extends Error {
 }
 
 /**
- * Invoke the Circle CLI synchronously with the given args and return stdout.
- * Wraps `child_process.execFileSync` against the globally installed `circle` binary
- * (`bun add -g @circle-fin/cli`).
+ * Serializes every CLI invocation: each call chains onto the previous one, so
+ * exactly one `circle` process runs at a time.
  *
- * Uses `execFileSync` rather than `execSync`: arguments like service URLs,
- * keywords, and JSON payloads pass through verbatim with no shell parsing,
- * preventing shell metacharacters in untrusted input from being interpreted.
+ * This preserves a guarantee the old `execFileSync` gave for free. Blocking the
+ * thread meant two tool calls could never overlap; going async removes that, and
+ * agent frameworks do dispatch tool calls in parallel. Two concurrent
+ * `services pay` runs against one wallet is a double-spend, so the ordering is
+ * kept deliberately rather than inherited.
  */
-export function runCircle(args: readonly string[], options: CliOptions = {}): string {
+let cliQueue: Promise<unknown> = Promise.resolve();
+
+function enqueue<T>(task: () => Promise<T>): Promise<T> {
+  const run = cliQueue.then(task);
+  // The tail the next caller waits on swallows the result: a command that
+  // throws must not reject the chain and take every command behind it with it.
+  cliQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+interface CliResult {
+  stdout: string;
+  stderr: string;
+  /** Exit status, or null when the child was terminated by a signal. */
+  code: number | null;
+}
+
+/**
+ * One `circle` run, resolved when the process closes — non-zero exits included,
+ * which the caller turns into a `CircleCliError`. Rejects only when the process
+ * could not be run at all (missing binary) or outran the output cap.
+ *
+ * `spawn` rather than `execFile`: stdin must be 'ignore', the way the sync path
+ * had it. `execFile` leaves stdin an open pipe, so a CLI subcommand that reads
+ * it (a Terms-of-Use confirmation, say) would wait forever on input no agent is
+ * there to type, instead of seeing EOF immediately.
+ */
+function spawnCircle(
+  binary: string,
+  args: readonly string[],
+  options: CliOptions,
+): Promise<CliResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, [...args], {
+      cwd: options.cwd,
+      env: options.env ?? process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let overflowed = false;
+    const collect = (chunk: string, into: 'out' | 'err'): void => {
+      if (into === 'out') stdout += chunk;
+      else stderr += chunk;
+      if (stdout.length + stderr.length > MAX_OUTPUT_CHARS && !overflowed) {
+        overflowed = true;
+        child.kill();
+      }
+    };
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => collect(chunk, 'out'));
+    child.stderr.on('data', (chunk: string) => collect(chunk, 'err'));
+
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (overflowed) {
+        reject(new Error(`circle ${args.join(' ')} produced more than ${MAX_OUTPUT_CHARS} bytes`));
+        return;
+      }
+      resolve({ stdout, stderr, code });
+    });
+  });
+}
+
+/**
+ * Invoke the Circle CLI with the given args and resolve with stdout, against
+ * the globally installed `circle` binary (`bun add -g @circle-fin/cli`).
+ *
+ * Asynchronous on purpose: the CLI shells out for seconds at a time (payments,
+ * discovery, balance reads), and the sync variant froze the whole process
+ * meanwhile — the chat UI's spinner stopped mid-animation and the terminal
+ * stopped repainting until the child exited. Calls are still serialized (see
+ * `enqueue`), so only the event loop was given back, not the ordering.
+ *
+ * Spawns the binary directly, with no shell: arguments like service URLs,
+ * keywords, and JSON payloads pass through verbatim, so shell metacharacters in
+ * untrusted input are never interpreted.
+ */
+export async function runCircle(
+  args: readonly string[],
+  options: CliOptions = {},
+): Promise<string> {
   const finalArgs =
     options.json && !args.includes('--output') ? [...args, '--output', 'json'] : [...args];
   const binary = options.binary ?? 'circle';
@@ -107,39 +214,36 @@ export function runCircle(args: readonly string[], options: CliOptions = {}): st
 
   let lastError: CircleCliError | undefined;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let stdout = '';
+    let stderr = '';
+    let exitCode: number | null = null;
+    let detail: string;
     try {
-      return execFileSync(binary, finalArgs, {
-        cwd: options.cwd,
-        env: options.env ?? process.env,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        maxBuffer: 10 * 1024 * 1024,
-      });
+      const result = await enqueue(() => spawnCircle(binary, finalArgs, options));
+      if (result.code === 0) return result.stdout;
+      ({ stdout, stderr } = result);
+      exitCode = result.code;
+      detail =
+        withoutNodeWarnings(stderr) || stdout.trim() || `exited with code ${String(result.code)}`;
     } catch (err) {
-      const e = err as {
-        stderr?: Buffer | string;
-        stdout?: Buffer | string;
-        status?: number | null;
-        message: string;
-      };
-      const stderr = e.stderr ? e.stderr.toString() : '';
-      const stdout = e.stdout ? e.stdout.toString() : '';
-      const detail = stderr.trim() || stdout.trim() || e.message;
-      lastError = new CircleCliError(
-        `circle ${finalArgs.join(' ')} failed: ${detail}`,
-        finalArgs,
-        stdout,
-        stderr,
-        e.status ?? null,
-      );
-      // Retry only transient network faults; a real CLI error (bad args,
-      // auth, validation) fails fast on the first attempt.
-      if (attempt < maxAttempts && isTransientFailure(detail)) {
-        sleepSync(300 * 3 ** (attempt - 1));
-        continue;
-      }
-      throw lastError;
+      // The process never ran (missing binary, output cap): no streams to read.
+      detail = err instanceof Error ? err.message : String(err);
     }
+
+    lastError = new CircleCliError(
+      `circle ${finalArgs.join(' ')} failed: ${detail}`,
+      finalArgs,
+      stdout,
+      stderr,
+      exitCode,
+    );
+    // Retry only transient network faults; a real CLI error (bad args,
+    // auth, validation) fails fast on the first attempt.
+    if (attempt < maxAttempts && isTransientFailure(detail)) {
+      await sleep(300 * 3 ** (attempt - 1));
+      continue;
+    }
+    throw lastError;
   }
   // Unreachable: the loop either returns or throws on the final attempt.
   // The non-null assertion satisfies TS control-flow; lastError is always set.
@@ -147,8 +251,11 @@ export function runCircle(args: readonly string[], options: CliOptions = {}): st
 }
 
 /** Run the CLI with `--output json` and parse the resulting JSON payload. */
-export function runCircleJson<T>(args: readonly string[], options: CliOptions = {}): T {
-  const out = runCircle(args, { ...options, json: true });
+export async function runCircleJson<T>(
+  args: readonly string[],
+  options: CliOptions = {},
+): Promise<T> {
+  const out = await runCircle(args, { ...options, json: true });
   const trimmed = out.trim();
   try {
     return JSON.parse(trimmed) as T;

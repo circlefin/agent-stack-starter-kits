@@ -1,8 +1,8 @@
 {
-  "name": "@agent-stack-ecosystem-kits/circle-tools",
+  "name": "@agent-stack-starter-kits/circle-tools",
   "version": "0.0.0",
   "private": true,
-  "description": "Framework-agnostic TypeScript wrappers around the Circle CLI (wallets, balances, service discovery, x402 payments).",
+  "description": "Framework-agnostic TypeScript wrappers around the Circle CLI, for the kits' own terminal chrome: session and login, wallet and Gateway balance reads, and marketplace search.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -10,7 +10,7 @@
     ".": "./src/index.ts"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.15.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -18,74 +18,32 @@
 
 import { createWorkflow, createStep } from '@mastra/core/workflows';
 import { z } from 'zod';
-import { runCircle } from '@agent-stack-ecosystem-kits/circle-tools';
+import { requireSession } from '@agent-stack-starter-kits/circle-tools';
 import { buildAgent } from './agent';
 import { loadConfig } from './config';
-import { withRetry } from './retry';
+import { withRetry } from '@agent-stack-starter-kits/agent-cli';
+import { buildInitialPrompt } from '@agent-stack-starter-kits/kit-core';
 
-const PROMPT =
-  'Run curl -sL https://agents.circle.com/skills/setup.md, and use the returned setup instructions to set up my agent wallet.';
-
+/**
+ * Gate the workflow on a valid Circle agent session.
+ *
+ * The interactive email + OTP login itself lives in `ensureSession`, which
+ * `index.ts` runs before the workflow starts. This step only re-verifies the
+ * session, so the login flow (and its hardening: JSON status parsing, single-use
+ * request IDs, keyring diagnostics) has exactly one implementation across kits.
+ *
+ * It deliberately does not prompt via `suspend()`. Two reasons: the session is
+ * already guaranteed by the time the run starts, and `suspend()` in @mastra/core
+ * v1 does not return the resumed value — it marks the step suspended and
+ * resolves `undefined`, expecting the step to return immediately and re-execute
+ * from the top with `resumeData` populated on resume.
+ */
 const authStep = createStep({
   id: 'auth',
   inputSchema: z.object({}),
   outputSchema: z.object({ authenticated: z.literal(true) }),
-  suspendSchema: z.object({
-    type: z.enum(['terms', 'email', 'otp']),
-    prompt: z.string(),
-  }),
-  resumeSchema: z.object({ value: z.string() }),
-  execute: async ({ suspend, resumeData }) => {
-    // Check wallet status
-    let status: string;
-    try {
-      status = runCircle(['wallet', 'status']);
-    } catch (err) {
-      status = err instanceof Error ? err.message : String(err);
-    }
-
-    // Handle terms acceptance
-    if (status.includes('Terms acceptance is required')) {
-      const termsResume = await suspend({
-        type: 'terms',
-        prompt:
-          'Please review and accept the Circle Terms of Use (https://agents.circle.com/terms-of-use) and Privacy Policy (https://www.circle.com/legal/privacy-policy). Type "yes" to accept.',
-      });
-      const termsAnswer = (termsResume as { value: string } | undefined)?.value ?? '';
-      if (termsAnswer.toLowerCase() !== 'yes') {
-        throw new Error('Terms of Use must be accepted to continue.');
-      }
-      runCircle(['terms', 'accept']);
-
-      // Re-check status after accepting terms
-      try {
-        status = runCircle(['wallet', 'status']);
-      } catch (err) {
-        status = err instanceof Error ? err.message : String(err);
-      }
-    }
-
-    // Handle authentication
-    if (status.includes('Not logged in') || status.includes('AUTH_REQUIRED')) {
-      const emailResume = await suspend({
-        type: 'email',
-        prompt: 'Please enter your email address to log in to Circle:',
-      });
-      const email = ((emailResume as { value: string } | undefined)?.value ?? '').trim();
-
-      const loginInitOutput = runCircle(['wallet', 'login', email, '--init']);
-      const requestIdMatch = loginInitOutput.match(/--request\s+([a-f0-9-]+)/);
-      const requestId = requestIdMatch?.[1] ?? '';
-
-      const otpResume = await suspend({
-        type: 'otp',
-        prompt: 'Please enter the OTP code sent to your email:',
-      });
-      const otp = ((otpResume as { value: string } | undefined)?.value ?? '').trim();
-
-      runCircle(['wallet', 'login', '--request', requestId, '--otp', otp]);
-    }
-
+  execute: async () => {
+    await requireSession();
     return { authenticated: true as const };
   },
 });
@@ -93,22 +51,36 @@ const authStep = createStep({
 const agentStep = createStep({
   id: 'agent',
   inputSchema: z.object({ authenticated: z.literal(true) }),
-  outputSchema: z.object({ summary: z.string() }),
+  outputSchema: z.object({ summary: z.string(), prompt: z.string() }),
   execute: async () => {
     const config = loadConfig();
+    // Nothing in this step should reach the approval gate: the session is
+    // already valid, and setup and status checks spend nothing. A prompt here
+    // would mean the agent tried to move USDC during what is supposed to be a
+    // read-only opening turn, and failing loudly is the right answer to that.
     const noInteractiveAsk = async (): Promise<string> => {
       throw new Error('No interactive terminal available in this workflow step.');
     };
-    const agent = buildAgent(config, noInteractiveAsk);
-    const result = await withRetry(() => agent.generate(PROMPT, { maxSteps: 30 }), 'agent');
-    return { summary: result.text ?? '(no output)' };
+    const agent = await buildAgent(config, noInteractiveAsk);
+    const prompt = await buildInitialPrompt();
+    const result = await withRetry(
+      (signal) => agent.generate(prompt, { maxSteps: 30, abortSignal: signal }),
+      { label: 'agent' },
+    );
+    // `prompt` is returned alongside the summary so `index.ts` can replay the
+    // exact turn this step sent as the first chat-history message, rather than
+    // recomputing it — `buildInitialPrompt()` reads skills off disk fresh each
+    // call, and this step's own run may have just installed them, so a second
+    // call after this step returns can produce a different prompt than the one
+    // `summary` is actually a reply to.
+    return { summary: result.text ?? '(no output)', prompt };
   },
 });
 
 export const onboardingWorkflow = createWorkflow({
   id: 'circle-onboarding',
   inputSchema: z.object({}),
-  outputSchema: z.object({ summary: z.string() }),
+  outputSchema: z.object({ summary: z.string(), prompt: z.string() }),
 })
   .then(authStep)
   .then(agentStep)

@@ -18,15 +18,19 @@
 
 import 'dotenv/config';
 
+/** The LLM providers this kit can drive. */
 export type LLMProvider = 'anthropic' | 'openai';
 
+/** The shape every kit's config resolves to: who serves the model, the key that
+ * authenticates it, and which model to ask for. This kit can hold two of them
+ * (see `KitConfig.fallback`), so it is named separately. */
 export interface ProviderConfig {
   provider: LLMProvider;
+  providerApiKey: string;
   model: string;
 }
 
 export interface KitConfig extends ProviderConfig {
-  chain: string;
   /**
    * If both ANTHROPIC_API_KEY and OPENAI_API_KEY are set, this is populated
    * with the secondary provider so the kit can fall back automatically when
@@ -35,42 +39,44 @@ export interface KitConfig extends ProviderConfig {
   fallback?: ProviderConfig;
 }
 
-const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
-const DEFAULT_OPENAI_MODEL = 'gpt-4.1';
+const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5';
+const DEFAULT_OPENAI_MODEL = 'gpt-5.6-sol';
 
 /**
- * Load kit configuration from environment variables.
+ * Resolve the kit's runtime config.
  *
  * Provider selection: ANTHROPIC_API_KEY is checked first; if absent,
  * OPENAI_API_KEY is used. When BOTH keys are present the secondary becomes an
  * automatic fallback — if the primary provider returns a quota or auth error
- * the kit retries the same turn with the fallback model.
+ * the kit retries the same turn with the fallback model. LLM_MODEL overrides
+ * the primary model only (a raw model ID, no provider prefix). The Circle side
+ * authenticates through the CLI, so there is no Circle key here.
  *
- * LLM_MODEL overrides the primary model only (no provider prefix needed,
- * e.g. "claude-opus-4-7" or "gpt-4o-mini").
+ * There is no chain setting. The `circle` CLI settles each payment on a chain
+ * the seller and the wallet have in common, so a kit-level chain would only be
+ * a label that lies when they disagree.
  */
 export function loadConfig(): KitConfig {
-  const chain = process.env['CIRCLE_CHAIN'] ?? 'BASE';
   const env = process.env;
-  const anthropicKey = env['ANTHROPIC_API_KEY']?.trim();
-  const openaiKey = env['OPENAI_API_KEY']?.trim();
+  const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
+  const openaiKey = env.OPENAI_API_KEY?.trim();
 
   if (anthropicKey) {
     return {
-      chain,
       provider: 'anthropic',
-      model: env['LLM_MODEL'] ?? DEFAULT_ANTHROPIC_MODEL,
+      providerApiKey: anthropicKey,
+      model: env.LLM_MODEL?.trim() || DEFAULT_ANTHROPIC_MODEL,
       fallback: openaiKey
-        ? { provider: 'openai', model: DEFAULT_OPENAI_MODEL }
+        ? { provider: 'openai', providerApiKey: openaiKey, model: DEFAULT_OPENAI_MODEL }
         : undefined,
     };
   }
 
   if (openaiKey) {
     return {
-      chain,
       provider: 'openai',
-      model: env['LLM_MODEL'] ?? DEFAULT_OPENAI_MODEL,
+      providerApiKey: openaiKey,
+      model: env.LLM_MODEL?.trim() || DEFAULT_OPENAI_MODEL,
     };
   }
 

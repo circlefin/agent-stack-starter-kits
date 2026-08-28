@@ -18,13 +18,18 @@
 
 import 'dotenv/config';
 
+/** The LLM providers this kit can drive. Single-provider, hence one member. */
+export type LLMProvider = 'anthropic';
+
+/** The shape every kit's config resolves to: who serves the model, the key that
+ * authenticates it, and which model to ask for. */
 export interface KitConfig {
-  /** Anthropic API key used to authenticate the Claude Agent SDK. */
-  anthropicApiKey: string;
+  provider: LLMProvider;
+  providerApiKey: string;
   model: string;
 }
 
-const DEFAULT_MODEL = 'claude-sonnet-4-6';
+const DEFAULT_MODEL = 'claude-opus-5';
 
 /**
  * Resolve the kit's runtime config.
@@ -35,6 +40,10 @@ const DEFAULT_MODEL = 'claude-sonnet-4-6';
  * stdin is an SDK-controlled pipe), which surfaces as an indefinite freeze. A
  * missing or bad key fails loudly here or as a 401 instead. The Circle side
  * authenticates through the CLI, so there is no Circle key here.
+ *
+ * There is no chain setting. The `circle` CLI settles each payment on a chain
+ * the seller and the wallet have in common, so a kit-level chain would only be
+ * a label that lies when they disagree.
  */
 export function loadConfig(): KitConfig {
   const env = process.env;
@@ -48,7 +57,8 @@ export function loadConfig(): KitConfig {
   }
 
   return {
-    anthropicApiKey: key,
+    provider: 'anthropic',
+    providerApiKey: key,
     model: env.LLM_MODEL?.trim() || DEFAULT_MODEL,
   };
 }

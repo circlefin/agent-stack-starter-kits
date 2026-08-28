@@ -17,6 +17,7 @@
  */
 
 import { CircleCliError, runCircle } from './cli';
+import { invalidateWalletPick } from './wallet';
 
 /**
  * Framework-agnostic Circle CLI session handling: status checks, the two-step
@@ -36,11 +37,24 @@ export const TERMS_MESSAGE =
   '  circle wallet status\n\n' +
   'yourself, review and accept the Terms of Use when prompted, then re-run the demo.';
 
+export interface AskOptions {
+  /** False keeps the answer out of the terminal transcript (secrets). */
+  echo?: boolean;
+  /** Grey hint text shown in the input box while it's empty, e.g. a pointer to `/help`. */
+  placeholder?: string;
+}
+
+/**
+ * How the kits prompt a human. The canonical shape, so a prompt raised down here
+ * (the OTP below) can ask the UI up there not to record the answer.
+ */
+export type AskFn = (question: string, options?: AskOptions) => Promise<string>;
+
 /** Terminal I/O the login flow drives. `ask` prompts the human (and is expected
  * to handle "exit"); `log` writes a namespaced status line; `bold` styles a
  * prompt label and defaults to identity for non-TTY callers. */
 export interface InteractiveIo {
-  ask: (q: string) => Promise<string>;
+  ask: AskFn;
   log: (line: string) => void;
   bold?: (s: string) => string;
 }
@@ -59,17 +73,39 @@ function rawText(e: unknown): string {
 }
 
 /** `circle wallet status` exits non-zero when logged out; capture either way. */
-function statusText(): string {
+async function statusText(): Promise<string> {
   try {
-    return runCircle(['wallet', 'status']);
+    return await runCircle(['wallet', 'status', '--type', 'agent', '--output', 'json']);
   } catch (e) {
     return rawText(e);
   }
 }
 
-/** An active session prints "Status:   VALID". */
+/**
+ * Return true if either the mainnet or testnet agent session is VALID.
+ *
+ * The CLI's human-readable output picks testnet first (`session.testnet ??
+ * session.mainnet`), so a text scan of "Status: VALID" misses a valid mainnet
+ * session when testnet is expired. The JSON output lists both environments, so
+ * we parse that and accept either one being valid.
+ */
 function isLoggedIn(status: string): boolean {
-  return /status:\s*valid/i.test(status);
+  try {
+    const raw = JSON.parse(status) as {
+      data?: { testnet?: { tokenStatus?: string }; mainnet?: { tokenStatus?: string } };
+      testnet?: { tokenStatus?: string };
+      mainnet?: { tokenStatus?: string };
+    };
+    // The CLI wraps successful output in a `data` envelope; unwrap if present.
+    const d = raw.data ?? raw;
+    return (
+      /valid/i.test(d.testnet?.tokenStatus ?? '') ||
+      /valid/i.test(d.mainnet?.tokenStatus ?? '')
+    );
+  } catch {
+    // Fall back to text matching when the CLI emits a plain-text error.
+    return /status:\s*valid/i.test(status);
+  }
 }
 
 /** Detect a pending Terms-of-Use gate in any CLI output. */
@@ -100,8 +136,12 @@ function parseRequestId(out: string): string | undefined {
 }
 
 /** Snapshot of the current CLI session, for callers that want to branch on it. */
-export function sessionStatus(): { loggedIn: boolean; termsPending: boolean; raw: string } {
-  const raw = statusText();
+export async function sessionStatus(): Promise<{
+  loggedIn: boolean;
+  termsPending: boolean;
+  raw: string;
+}> {
+  const raw = await statusText();
   return { loggedIn: isLoggedIn(raw), termsPending: termsPending(raw), raw };
 }
 
@@ -125,11 +165,15 @@ async function runEmailOtpLogin(io: Required<InteractiveIo>): Promise<void> {
 
     let initOut: string;
     try {
-      initOut = runCircle(['wallet', 'login', email, '--type', 'agent', '--init']);
+      initOut = await runCircle(['wallet', 'login', email, '--type', 'agent', '--init']);
     } catch (e) {
       const text = rawText(e);
       if (termsPending(text)) throw new Error(TERMS_MESSAGE);
       log(`login init failed: ${text}`);
+      // No "/help" hint here, or at any other prompt in this file: the slash
+      // commands are routed by the kit's chat loop, which does not exist yet —
+      // login runs before it, so "/help" typed here would be read as an email
+      // address. "exit" is handled inside `ask` itself and does work.
       log('check the address and re-enter it; type "exit" to quit');
       continue;
     }
@@ -144,14 +188,18 @@ async function runEmailOtpLogin(io: Required<InteractiveIo>): Promise<void> {
       continue;
     }
 
+    // `echo: false`: the code is single-use and short-lived, but there is no
+    // reason to leave it sitting in the user's scrollback.
     const otp = (
-      await ask(`${bold('OTP from the email (6 digits, or full e.g. B1X-123456):')}\n> `)
+      await ask(`${bold('OTP from the email (6 digits, or full e.g. B1X-123456):')}\n> `, {
+        echo: false,
+      })
     ).trim();
     if (!otp) throw new Error('No OTP entered, cannot complete login.');
 
     let otpOut = '';
     try {
-      otpOut = runCircle(['wallet', 'login', '--request', requestId, '--otp', otp]);
+      otpOut = await runCircle(['wallet', 'login', '--request', requestId, '--otp', otp]);
     } catch (e) {
       const text = rawText(e);
       if (termsPending(text)) throw new Error(TERMS_MESSAGE);
@@ -173,7 +221,7 @@ async function runEmailOtpLogin(io: Required<InteractiveIo>): Promise<void> {
     let sessionOk = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt > 0) await new Promise((r) => setTimeout(r, 1000));
-      lastStatus = statusText();
+      lastStatus = await statusText();
       if (isLoggedIn(lastStatus)) { sessionOk = true; break; }
     }
     if (!sessionOk) {
@@ -187,6 +235,8 @@ async function runEmailOtpLogin(io: Required<InteractiveIo>): Promise<void> {
         `Login completed but no valid session was produced (status: ${lastStatus.trim()}).${hint} Re-run the demo.`,
       );
     }
+    // A different account means a different set of wallets.
+    invalidateWalletPick();
     log('logged in, Circle session valid');
     return;
   }
@@ -195,6 +245,28 @@ async function runEmailOtpLogin(io: Required<InteractiveIo>): Promise<void> {
 /** Fill in optional I/O fields with safe defaults (identity `bold`). */
 function withDefaults(io: InteractiveIo): Required<InteractiveIo> {
   return { ask: io.ask, log: io.log, bold: io.bold ?? ((s) => s) };
+}
+
+/**
+ * Non-interactive session gate: return normally when a valid agent session
+ * exists, throw an actionable error otherwise. Never prompts and never accepts
+ * the Terms of Use.
+ *
+ * This is the counterpart to `ensureSession` for contexts that cannot prompt —
+ * a framework workflow step, a background job, a CI run. Callers there must not
+ * re-derive "am I logged in?" from CLI text: the human-readable `wallet status`
+ * lists mainnet and testnet separately, so scanning it for "Not logged in"
+ * reports a logged-out session whenever *either* environment is logged out.
+ * `sessionStatus` parses the JSON output and accepts either one being valid.
+ */
+export async function requireSession(): Promise<void> {
+  const { loggedIn, termsPending: pending, raw } = await sessionStatus();
+  if (loggedIn) return;
+  if (pending) throw new Error(TERMS_MESSAGE);
+  throw new Error(
+    `No valid Circle agent session (status: ${raw.trim()}). Run the demo from an ` +
+      'interactive terminal and complete the email OTP login, then retry.',
+  );
 }
 
 /**
@@ -210,7 +282,7 @@ function withDefaults(io: InteractiveIo): Required<InteractiveIo> {
  */
 export async function ensureSession(io: InteractiveIo): Promise<SessionResult> {
   const ready = withDefaults(io);
-  const status = statusText();
+  const status = await statusText();
   if (isLoggedIn(status)) {
     ready.log('Circle session valid, skipping login');
     return { status: 'already-valid' };
@@ -229,11 +301,12 @@ export async function ensureSession(io: InteractiveIo): Promise<SessionResult> {
  * the caller's view: when there is no active session the CLI reports it and this
  * returns without error so a logout tool never crashes the demo.
  */
-export function logout(log?: (line: string) => void): void {
-  if (!sessionStatus().loggedIn) {
+export async function logout(log?: (line: string) => void): Promise<void> {
+  if (!(await sessionStatus()).loggedIn) {
     log?.('no active Circle session, nothing to log out of');
     return;
   }
-  runCircle(['wallet', 'logout', '--type', 'agent']);
+  await runCircle(['wallet', 'logout', '--type', 'agent']);
+  invalidateWalletPick();
   log?.('logged out, Circle session cleared');
 }

@@ -1,202 +1,79 @@
-# Vercel AI SDK Kit — Circle Agent Stack
+# Vercel AI SDK × Circle Agent Stack
 
-Autonomous Payment Agent built with the **[Vercel AI SDK](https://github.com/vercel/ai)** and Circle Agent Stack.
+An agent built with the [Vercel AI SDK](https://sdk.vercel.ai) that owns a USDC wallet and pays for services on the [Circle Agent Marketplace](https://agents.circle.com/services) on your behalf. It has a shell rather than a wallet API, and learns what to do with it from [Circle's skills](https://github.com/circlefin/skills) — which it installs itself, on its first run, straight from Circle's [setup document](https://agents.circle.com/skills/setup.md).
 
-Part of the [agent-stack-ecosystem-kits](../../README.md) monorepo — the same demo scenario
-across five frameworks so you can compare them directly.
+## Prerequisites
 
-| Kit | Framework |
-|-----|-----------|
-| `kits/langchain` | LangChain Deep Agents |
-| `kits/claude-agent-sdk` | Claude Agent SDK |
-| `kits/mastra` | Mastra |
-| `kits/openai-agents` | OpenAI Agents SDK |
-| **`kits/vercel-ai`** ← this kit | **Vercel AI SDK** |
+- [Bun](https://bun.com) 1.2+
+- Circle CLI: `bun add -g @circle-fin/cli`
+- A Circle account, plus an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`
 
----
-
-## What the agent does
-
-One command, one conversation:
+## Run
 
 ```bash
-bun run --cwd kits/vercel-ai demo
-```
-
-**Automated (no human input)**
-1. Fetch the Circle Agent setup skill from `agents.circle.com/skills/setup.md`
-2. Follow the skill: list or create a USDC wallet on Base
-3. Check the wallet's USDC balance
-4. Search the Circle Agent Marketplace for a service
-5. Inspect the service (price, schema, method)
-6. ⏸ **Pause — human approves the payment** (in the tool execute function)
-7. Pay for the service with a USDC nanopayment via x402
-
-**Interactive**
-After the first payment the demo drops into a `You: >` REPL.
-Full agent context is kept across every turn — the message history is passed
-back to `generateText` on each call; no session ID to manage.
-
----
-
-## Quick start
-
-```bash
-# One-time host setup
-bun add -g @circle-fin/cli
-circle skill install --tool claude-code   # optional if only using this kit
-
-# First run
-cp kits/vercel-ai/.env.example kits/vercel-ai/.env
-# edit .env → set ANTHROPIC_API_KEY or OPENAI_API_KEY
-
+cd kits/vercel-ai
 bun install
-bun run --cwd kits/vercel-ai demo
+cp .env.example .env   # add your API key
+bun run demo
 ```
 
----
+## How it works
 
-## Architecture
+There is no wrapper layer here: no typed tool per Circle command, and nothing in the prompt about how wallets, sellers or payments work.
 
-```
-┌──────────────────────────────────────────┐
-│  src/index.ts  (entry point)             │
-│  ┌─────────────────────────────────────┐ │
-│  │  buildTools(ask)                    │ │
-│  │  ┌───────────────────────────────┐  │ │
-│  │  │  circle_pay_service.execute   │  │ │
-│  │  │  → await ask("Approve?")  ←  │  │ │  ← human-in-the-loop
-│  │  └───────────────────────────────┘  │ │
-│  └───────────────┬─────────────────────┘ │
-│                  │                        │
-│  src/agent.ts  runTurn()                 │
-│  generateText({ maxSteps: 30, tools })   │
-│  onStepFinish → log intermediate text   │
-└──────────────────────────────────────────┘
-                   │ tool calls
-                   ▼
-┌──────────────────────────────────────────┐
-│  packages/circle-tools  (shared pkg)     │
-│  wallet · balance · services · x402      │
-└──────────────────────────────────────────┘
-```
+- **A shell, not an SDK surface.** The agent gets three tools — `shell`, `read_file` and `grep` — and runs `circle` in the first of them, next to `curl`, `jq` and everything else you have installed. A Circle command released tomorrow works here with no change to this repo.
+- **Skills off disk.** On a machine with none, the first turn is Circle's own bootstrap line: the agent fetches [setup.md](https://agents.circle.com/skills/setup.md) and installs the skills into `~/.agents/skills`, the tool-neutral store `~/.claude/skills` and its equivalents symlink into — so they are shared with every other agent on your machine. The system prompt carries their names and descriptions; the agent reads the body of the one that fits, with `read_file`, when it fits.
+- **A gate on the command, not the tool.** Sixteen tools meant two of them moved USDC, so those two were what paused. One shell means the question is *which command*, so [`packages/kit-core/src/approval.ts`](../../packages/kit-core/src/approval.ts) matches the command string — every segment of it, so a pipe or a `$(…)` cannot slip one past. That file is short, and it is the thing to edit. It is not a sandbox: it will not stop the agent deleting a file or installing a package. The ceiling no instruction can argue past is `circle wallet limit set`, which confirms by one-time code and so is yours to run.
+- **Reads of what the shell writes.** A marketplace search is thousands of lines of JSON schema, more than a tool result should carry, so the agent redirects it to a file and goes back for the part it needs. Without a reader, going back means running the search again — and on a paid call, that is a second charge.
 
----
+`generateText` has no external per-call permission hook, so the gate runs inside the shell tool. The shared tool bodies also never throw for an ordinary failure, which matters more here than elsewhere: a tool that throws inside `generateText` takes the whole call down with it instead of letting the model read the error and recover.
 
-## Key design decisions
+[`src/retry.ts`](./src/retry.ts) is the one file beyond the shape the other kits share. With both provider keys set this kit retries a failed turn against the second provider, and that only helps if a 429 meaning an *exhausted* quota fails fast rather than spending the shared retry budget on backoff it will never recover from. The file is that single predicate; the shared `withRetry` in `agent-cli` calls it through its `shouldRetry` hook.
 
-### `tool()` with `parameters` — the Vercel AI SDK primitive
+## First run
 
-Every Circle operation is a Vercel AI SDK `tool()` with a Zod `parameters` schema
-and an `execute` function. This is different from Mastra's `createTool()`,
-LangChain's `DynamicStructuredTool`, and the Claude Agent SDK's MCP server:
+- **Login.** The demo checks your Circle session and, if needed, logs you in with your email and a one-time code. You type both; the kit stores neither.
+- **Terms of Use.** If your account has not accepted Circle's Terms, the demo stops and asks you to run `circle wallet status` once and accept them yourself — an agent must never accept them for you.
+- **Approval.** Before any command that moves USDC — `services pay`, `wallet transfer`, `gateway deposit`, `wallet sign`, a change to your spending caps — the exact command is printed and waits for `y/N`. Nothing is spent unless you approve. Everything else runs unprompted.
+- Type `exit` or `quit` to end the session.
 
-```typescript
-// kits/vercel-ai/src/tools.ts
-import { tool } from 'ai';
-import { z } from 'zod';
+## Try it
 
-circle_inspect_service: tool({
-  description: 'Inspect an x402 service...',
-  parameters: z.object({
-    url: z.string().describe('The service URL to inspect'),
-  }),
-  execute: async ({ url }) => {
-    return await inspectService({ url });
-  },
-}),
-```
+Once the wallet is set up, ask for what you want in plain language:
 
-### Human-in-the-loop — inside `execute`
+- `check my flight WN2417 using FlightAware`
+- `what services are available for weather data?`
+- `top up my wallet with testnet USDC`
 
-The Vercel AI SDK has no external approval hook. Instead, the two USDC-spending
-tools (`circle_pay_service`, `circle_gateway_deposit`) pause execution by
-`await`-ing the readline `ask` function before touching USDC:
+## Quick commands
 
-```typescript
-// ── Human-in-the-loop ──────────────────────────────────────────────
-// No interruptOn (LangChain), no canUseTool (Claude SDK), no state.approve
-// (OpenAI Agents). The tool pauses here; generateText waits for the result.
-console.log('⚠  approval required: circle_pay_service');
-console.log(colorizeJson({ url, address, method, data }));
-const answer = (await ask('Approve? [y/N] ')).trim().toLowerCase();
-if (answer !== 'y') {
-  return { denied: true, message: 'Payment rejected by user.' };
-}
-// ───────────────────────────────────────────────────────────────────
-```
+A few common lookups skip the model round-trip and call the `circle` CLI directly:
 
-Because `generateText` `await`s each tool's `execute` result before continuing,
-the entire generation suspends at this point — no polling, no external state.
+| Command | Does |
+| --- | --- |
+| `/help` | list the commands below |
+| `/wallets` | list agent wallet addresses |
+| `/balance` | per-wallet USDC balances |
+| `/gateway` | Circle Gateway balance for the primary wallet |
+| `/discover <keyword>` | search the marketplace |
 
-### `generateText` with `maxSteps` — the agent loop
+`/discover` prints a numbered list; reply with just a number (e.g. `1`) to hand that service to the agent instead of retyping its name or URL. A `circle services search` the agent runs in its own shell is numbered the same way. A number only counts as a pick until the next turn reaches the agent, so a numeric answer to a question the agent asked ("how much USDC?") is never mistaken for a service. Picks still go through the agent as a normal turn — and the same approval gate if one leads to a payment — the number is just a shortcut for the reference, not a bypass.
 
-The SDK drives the tool-call loop automatically:
-model → tool call → tool result → model → … until the model returns no more
-tool calls or the step cap is reached. We own the message history and pass it
-back on each `generateText` call for multi-turn support:
+## Environment
 
-```typescript
-// kits/vercel-ai/src/agent.ts
-const result = await generateText({
-  model,
-  tools,
-  messages,          // full conversation history
-  maxSteps: 30,
-  onStepFinish: ({ text }) => {
-    if (text.trim()) console.log(heading('--- agent ---') + '\n' + text);
-  },
-});
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` *or* `OPENAI_API_KEY` | one of | Anthropic is used when both are set; the other key, if present, becomes the fallback provider. |
+| `LLM_MODEL` | no | Overrides the default model (`claude-opus-5` / `gpt-5.6-sol`). A raw model ID, no provider prefix. |
+| `NO_COLOR` | no | Disables colored output. Color is off automatically when output is piped. |
+| `NODE_OPTIONS` | no | Set to `--use-system-ca` if your corporate network inspects TLS traffic, so the `circle` CLI trusts your organisation's certificate authority. |
 
-// Append everything the model generated (assistant + tool results) for next turn
-return {
-  text: result.text,
-  responseMessages: result.response.messages as CoreMessage[],
-};
-```
-
-### Provider-agnostic model selection
-
-`ANTHROPIC_API_KEY` → `anthropic('claude-sonnet-4-6')` via `@ai-sdk/anthropic`
-`OPENAI_API_KEY` → `openai('gpt-4.1')` via `@ai-sdk/openai`
-
-Both use the same `generateText` call; only the `LanguageModel` object changes.
-
-### Conversation history — caller-owned
-
-Unlike LangGraph's MemorySaver or the Claude Agent SDK's session, the Vercel AI
-SDK is stateless — `generateText` takes messages in, returns messages out. The
-caller (index.ts) owns the history:
-
-```typescript
-// index.ts — turn 1
-let messages: CoreMessage[] = [{ role: 'user', content: bootstrapPrompt }];
-const { responseMessages } = await runTurn(config, messages, tools);
-messages = [...messages, ...responseMessages];
-
-// turn 2 (user follow-up)
-messages.push({ role: 'user', content: userInput });
-const { responseMessages: next } = await runTurn(config, messages, tools);
-messages = [...messages, ...next];
-```
-
----
-
-## Environment variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | one of the two | — | Anthropic API key (preferred) |
-| `OPENAI_API_KEY` | one of the two | — | OpenAI API key |
-| `LLM_MODEL` | no | see below | Raw model ID, no provider prefix |
-| `CIRCLE_CHAIN` | no | `BASE` | Chain for wallet operations |
-
-Default models: `claude-sonnet-4-6` (Anthropic), `gpt-4.1` (OpenAI).
-
----
+There is no chain to configure. The `circle` CLI settles each payment on a chain the seller and your wallet have in common, and the agent reads Circle's skills for how to choose between them.
 
 ## Links
 
-- Vercel AI SDK: https://sdk.vercel.ai
-- Circle Agent Stack: https://developers.circle.com/agent-stack
-- Circle Agent Marketplace: https://agents.circle.com/services
+- Vercel AI SDK: [docs](https://sdk.vercel.ai/docs), [GitHub](https://github.com/vercel/ai)
+- [Circle Agent Stack](https://developers.circle.com/agent-stack)
+- [Circle Agent Marketplace](https://agents.circle.com/services)
+- [Circle CLI reference](https://developers.circle.com/agent-stack/circle-cli/command-reference)
+- [Circle Developer Discord](https://discord.com/invite/buildoncircle)

@@ -18,13 +18,18 @@
 
 import 'dotenv/config';
 
+/** The LLM providers this kit can drive. Single-provider, hence one member. */
+export type LLMProvider = 'google';
+
+/** The shape every kit's config resolves to: who serves the model, the key that
+ * authenticates it, and which model to ask for. */
 export interface KitConfig {
-  /** Google AI Studio API key used to authenticate Gemini through @google/genai. */
-  googleApiKey: string;
+  provider: LLMProvider;
+  providerApiKey: string;
   model: string;
 }
 
-const DEFAULT_MODEL = 'gemini-3-flash-preview';
+const DEFAULT_MODEL = 'gemini-3.1-pro-preview';
 
 /**
  * Resolve the kit's runtime config.
@@ -34,6 +39,10 @@ const DEFAULT_MODEL = 'gemini-3-flash-preview';
  * so the kit fixes on GOOGLE_API_KEY (the variable named in the ADK quickstart)
  * and forwards it explicitly to the Gemini constructor. The Circle side
  * authenticates through the CLI, so there is no Circle key here.
+ *
+ * There is no chain setting. The `circle` CLI settles each payment on a chain
+ * the seller and the wallet have in common, so a kit-level chain would only be
+ * a label that lies when they disagree.
  */
 export function loadConfig(): KitConfig {
   const env = process.env;
@@ -47,7 +56,8 @@ export function loadConfig(): KitConfig {
   }
 
   return {
-    googleApiKey: key,
+    provider: 'google',
+    providerApiKey: key,
     model: env.LLM_MODEL?.trim() || DEFAULT_MODEL,
   };
 }

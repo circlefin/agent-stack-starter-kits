@@ -18,40 +18,54 @@
 
 import 'dotenv/config';
 
+/** The LLM providers this kit can drive. */
 export type LLMProvider = 'anthropic' | 'openai';
 
+/** The shape every kit's config resolves to: who serves the model, the key that
+ * authenticates it, and which model to ask for. */
 export interface KitConfig {
   provider: LLMProvider;
   providerApiKey: string;
   model: string;
 }
 
-const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
-const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
+const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5';
+const DEFAULT_OPENAI_MODEL = 'gpt-5.6-sol';
 
+/**
+ * Resolve the kit's runtime config.
+ *
+ * Provider selection: whichever API key is set wins. ANTHROPIC_API_KEY is
+ * checked first; if absent, OPENAI_API_KEY is used. LLM_MODEL overrides the
+ * default model for the selected provider (a raw model ID, no provider prefix).
+ * The Circle side authenticates through the CLI, so there is no Circle key here.
+ *
+ * There is no chain setting. The `circle` CLI settles each payment on a chain
+ * the seller and the wallet have in common, so a kit-level chain would only be
+ * a label that lies when they disagree.
+ */
 export function loadConfig(): KitConfig {
   const env = process.env;
+  const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
+  const openaiKey = env.OPENAI_API_KEY?.trim();
 
-  let provider: LLMProvider;
-  let providerApiKey: string;
-  let model: string;
-  if (env.ANTHROPIC_API_KEY && env.ANTHROPIC_API_KEY.trim() !== '') {
-    provider = 'anthropic';
-    providerApiKey = env.ANTHROPIC_API_KEY;
-    model = env.LLM_MODEL ?? DEFAULT_ANTHROPIC_MODEL;
-  } else if (env.OPENAI_API_KEY && env.OPENAI_API_KEY.trim() !== '') {
-    provider = 'openai';
-    providerApiKey = env.OPENAI_API_KEY;
-    model = env.LLM_MODEL ?? DEFAULT_OPENAI_MODEL;
-  } else {
-    throw new Error(
-      'No LLM provider key found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in kits/langchain/.env.',
-    );
+  if (anthropicKey) {
+    return {
+      provider: 'anthropic',
+      providerApiKey: anthropicKey,
+      model: env.LLM_MODEL?.trim() || DEFAULT_ANTHROPIC_MODEL,
+    };
   }
 
-  return {
-    provider,
-    providerApiKey,
-    model,
-  };
+  if (openaiKey) {
+    return {
+      provider: 'openai',
+      providerApiKey: openaiKey,
+      model: env.LLM_MODEL?.trim() || DEFAULT_OPENAI_MODEL,
+    };
+  }
+
+  throw new Error(
+    'No LLM provider key found. Set ANTHROPIC_API_KEY (preferred) or OPENAI_API_KEY in kits/langchain/.env.',
+  );
 }

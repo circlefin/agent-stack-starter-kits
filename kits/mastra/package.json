@@ -1,11 +1,12 @@
 {
-  "name": "@agent-stack-ecosystem-kits/kit-mastra",
+  "name": "@agent-stack-starter-kits/kit-mastra",
   "version": "0.0.0",
   "private": true,
   "description": "Autonomous Payment Agent example using Mastra + Circle Agent Stack.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "bun": ">=1.2",
+    "node": ">=22.15.0"
   },
   "scripts": {
     "demo": "bun run src/index.ts",
@@ -14,11 +15,12 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@agent-stack-ecosystem-kits/agent-cli": "workspace:*",
-    "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
+    "@agent-stack-starter-kits/agent-cli": "workspace:*",
+    "@agent-stack-starter-kits/circle-tools": "workspace:*",
+    "@agent-stack-starter-kits/kit-core": "workspace:*",
     "@mastra/core": "^1.35.0",
     "dotenv": "^17.4.2",
-    "zod": "^4.0.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

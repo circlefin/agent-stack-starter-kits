@@ -1,0 +1,38 @@
+{
+  "name": "@agent-stack-starter-kits/kit-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Framework-agnostic building blocks shared across the Circle Agent Stack kits: the agent's shell and file tools, the spend-approval gate, on-disk skill discovery, the instructions, the slash-command router, a terminal theme, and the shared fatal-error report.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./approval": "./src/approval.ts",
+    "./balance": "./src/balance.ts",
+    "./commands": "./src/commands.ts",
+    "./fatal": "./src/fatal.ts",
+    "./instructions": "./src/instructions.ts",
+    "./session": "./src/session.ts",
+    "./shell": "./src/shell.ts",
+    "./skills": "./src/skills.ts",
+    "./theme": "./src/theme.ts",
+    "./tools": "./src/tools.ts"
+  },
+  "engines": {
+    "bun": ">=1.2",
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@agent-stack-starter-kits/circle-tools": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}

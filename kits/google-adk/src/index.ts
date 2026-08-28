@@ -18,17 +18,21 @@
 
 import { InMemoryRunner, isFinalResponse, LogLevel, setLogLevel, type Event } from '@google/adk';
 import type { Content } from '@google/genai';
-import { createChatUi, type ChatUi } from '@agent-stack-ecosystem-kits/agent-cli';
-import {
-  ensureSession,
-  formatUsdcBalance,
-  walletUsdcBalance,
-} from '@agent-stack-ecosystem-kits/circle-tools';
+import { createChatUi, type ChatUi } from '@agent-stack-starter-kits/agent-cli';
+import { ensureSession, type AskFn } from '@agent-stack-starter-kits/circle-tools';
 
+import {
+  approveCommand,
+  buildInitialPrompt,
+  createBalanceReadout,
+  createCommandRouter,
+  isProviderOverloaded,
+  reportFatal,
+  setLiveNotices,
+} from '@agent-stack-starter-kits/kit-core';
 import { buildAgent, type ApprovalFn } from './agent';
 import { loadConfig } from './config';
-import { SETUP_SKILL_URL } from './skill';
-import { bold, colorizeJson, dim, green, heading, kitLine, red, yellow } from './theme';
+import { bold, heading, kitLine, red, replyBlock, toolLine, yellow } from './theme';
 
 const APP_NAME = 'circle-payment-agent';
 const USER_ID = 'demo-user';
@@ -57,16 +61,9 @@ function out(line: string): void {
   else console.log(line);
 }
 
-/** Refresh the pinned USDC balance readout. Best-effort: a balance read must
- * never break the session (e.g. before a wallet exists, or on an RPC blip). */
-async function refreshBalance(): Promise<void> {
-  try {
-    const summary = await walletUsdcBalance();
-    ui?.setBalance(summary ? formatUsdcBalance(summary) : null);
-  } catch {
-    // Leave the last shown balance in place.
-  }
-}
+// The pinned USDC readout, shared by every kit (see kit-core/balance). `ui` is
+// passed as a getter because it only exists once main() creates the chat UI.
+const balance = createBalanceReadout(() => ui);
 
 /**
  * Pull the agent's prose out of an event: text parts only, with any reasoning
@@ -90,18 +87,21 @@ async function main(): Promise<void> {
   // Falls back to plain console + readline when stdout/stdin is not a TTY.
   const chat = createChatUi({ title: heading('Autonomous Payment Agent') });
   ui = chat;
+  // In-flight tool calls draw in the live region at the bottom of the frame
+  // rather than in the scrollback, so each one erases itself the moment its
+  // finished block prints (see kit-core's `setLiveNotices`).
+  setLiveNotices((label) => chat.startRunning(toolLine(label)));
 
   log('Autonomous Payment Agent demo starting');
   const config = loadConfig();
-  log(`chain=BASE model=${config.model} auth=GOOGLE_API_KEY`);
-  log(dim('tip: type "exit" at any prompt to quit'));
+  log(`provider=${config.provider} model=${config.model}`);
 
   // Every prompt (chat input, approval [y/N], email/OTP) flows through the same
   // pinned input box the chat UI renders at the bottom of the terminal.
   // `exit` typed at ANY prompt halts the demo immediately, tearing down the UI
   // (which restores the console) before the answer reaches the caller.
-  const ask = async (q: string): Promise<string> => {
-    const answer = await chat.ask(q);
+  const ask: AskFn = async (q, options) => {
+    const answer = await chat.ask(q, options);
     if (answer.trim().toLowerCase() === 'exit') {
       log('exit, halting.');
       chat.close();
@@ -110,31 +110,20 @@ async function main(): Promise<void> {
     return answer;
   };
 
-  // Human-in-the-loop, the ADK-native mirror of LangChain's interruptOn: the
-  // agent's beforeToolCallback routes the two USDC-spending tools through this
-  // approval prompt; every other tool runs without a pause.
-  const approve: ApprovalFn = async (toolName, args) => {
-    log(yellow(`approval required for tool: ${bold(toolName)}`));
-    out(colorizeJson(args));
-    const answer = (await ask(bold('Approve this action? [y/N] '))).trim().toLowerCase();
-    const approved = answer === 'y' || answer === 'yes';
-    log(approved ? green('approved by user') : red('rejected by user'));
-    return approved;
-  };
+  // Human-in-the-loop. The agent's beforeToolCallback routes any shell command
+  // that moves USDC through this prompt; every other command runs without a
+  // pause. What is shown and approved is the command itself, because the command
+  // is what runs.
+  const approve: ApprovalFn = (command) => approveCommand(ask, command, { log, out });
 
-  const agent = buildAgent(config, approve, ask);
+  const agent = await buildAgent(config, approve);
   const runner = new InMemoryRunner({ agent, appName: APP_NAME });
-
-  // Brief's AGENT BOOTSTRAP PROMPT, verbatim. setup.md drives the first turn.
-  const bootstrapPrompt =
-    `Run curl -sL ${SETUP_SKILL_URL}, ` +
-    'and use the returned setup instructions to set up my agent wallet.';
 
   // Inline auth: ensure the Circle CLI has a valid agent session before the
   // agent runs. Logs in with email + OTP if needed; a pending Terms gate is
   // reported as a manual step (the kit never accepts the Terms for the user).
   await ensureSession({ ask, log, bold });
-  await refreshBalance();
+  await balance.refresh();
 
   // One session for the whole conversation: the InMemorySessionService is the
   // ADK-native checkpointer, so the agent keeps full context across the
@@ -144,14 +133,27 @@ async function main(): Promise<void> {
     userId: USER_ID,
   });
 
+  // Handles "/balance", "/discover <keyword>", etc. (direct circle-tools calls,
+  // no model turn spent) and bare-number replies to a prior "/discover" list.
+  const commands = createCommandRouter({ log, out, refreshBalance: balance.refresh });
+
   log('invoking agent ...');
   // `null` means "no new turn to run" — used for the blank-line re-prompt so we
   // never re-invoke the agent without a fresh user message.
-  let input: Content | null = userMessage(bootstrapPrompt);
+  // On a machine with no skills this is Circle's own bootstrap line, so the
+  // first turn installs them; otherwise it is a status check.
+  let input: Content | null = userMessage(await buildInitialPrompt());
 
   while (true) {
     if (input) {
       chat.setStatus('working…');
+      // NOTE: unlike the discrete-invoke kits (openai/mastra/vercel/langchain),
+      // this kit does NOT wrap turns in the shared `withRetry` + per-attempt
+      // timeout. `runAsync` yields a single streaming turn over a persistent ADK
+      // session; racing a timeout against the stream would truncate a
+      // legitimately long turn. If a stall guard is needed, drive the iterator
+      // manually and race each `.next()` against a timeout, calling the
+      // iterator's `return?.()` to clean up on timeout.
       for await (const event of runner.runAsync({
         userId: USER_ID,
         sessionId: session.id,
@@ -159,28 +161,42 @@ async function main(): Promise<void> {
       })) {
         if (event.partial) continue;
         if (event.errorCode) {
+          // A 529 that reaches here means the provider is overloaded and any
+          // retries the SDK does internally ran out — transient on the
+          // provider's side, not a kit bug, same as the Claude SDK kit's
+          // equivalent check on `msg.errors`.
+          if (isProviderOverloaded(event.errorMessage ?? event.errorCode)) {
+            log(yellow('The LLM provider is overloaded. This is transient; try again in a moment.'));
+          }
           log(red(`model error ${event.errorCode}: ${event.errorMessage ?? '(no message)'}`));
           continue;
         }
         if (!isFinalResponse(event)) continue;
         const text = extractText(event);
         if (!text) continue;
-        out(`\n${heading('--- agent reply ---')}\n`);
-        out(text);
-        out(`\n${heading('-------------------')}`);
+        out(replyBlock(text));
       }
       chat.setStatus(null);
-      await refreshBalance();
+      balance.refreshSoon();
     }
 
-    const next = (await ask('> ')).trim();
+    const next = (
+      await ask('> ', { placeholder: 'type "/help" for quick commands or "exit" to quit' })
+    ).trim();
     if (next.toLowerCase() === 'quit') {
       log('done.');
       break;
     }
     // A blank line is a stray Enter, not an intent to quit: re-prompt without
     // running a turn. `exit` (handled in `ask`) and `quit` still halt.
-    input = next ? userMessage(next) : null;
+    if (!next) {
+      input = null;
+      continue;
+    }
+    // "/command" and a bare number picking a prior "/discover" result are
+    // handled locally; everything else goes to the agent as a normal turn.
+    const outcome = await commands.run(next);
+    input = outcome.handled ? (outcome.forward ? userMessage(outcome.forward) : null) : userMessage(next);
   }
 
   // Unmount the UI (and restore the patched console) so the process can exit.
@@ -191,7 +207,6 @@ main().catch((err: unknown) => {
   // Tear down the UI first so the console is restored before we print the
   // failure; otherwise these lines would be swallowed by the Ink frame.
   ui?.close();
-  const message = err instanceof Error ? err.message : String(err);
-  console.error(kitLine(red(`FATAL: ${message}`)));
+  reportFatal(err, kitLine);
   process.exit(1);
 });

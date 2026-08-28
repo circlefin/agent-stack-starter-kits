@@ -1,5 +1,5 @@
 {
-  "name": "@agent-stack-ecosystem-kits/agent-cli",
+  "name": "@agent-stack-starter-kits/agent-cli",
   "version": "0.0.0",
   "private": true,
   "description": "Reusable Ink-based terminal chat UI (scrolling log + pinned bottom input) shared by the agent kits.",
@@ -10,7 +10,7 @@
     ".": "./src/index.tsx"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.15.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

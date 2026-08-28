@@ -18,37 +18,48 @@
 
 import 'dotenv/config';
 
+/** The LLM providers this kit can drive. Single-provider, hence one member. */
+export type LLMProvider = 'openai';
+
+/** The shape every kit's config resolves to: who serves the model, the key that
+ * authenticates it, and which model to ask for. */
 export interface KitConfig {
-  chain: string;
-  openaiApiKey: string;
+  provider: LLMProvider;
+  providerApiKey: string;
   /** OpenAI model name. Override via LLM_MODEL env var. */
   model: string;
 }
 
-const DEFAULT_MODEL = 'gpt-4.1';
+const DEFAULT_MODEL = 'gpt-5.6-sol';
 
 /**
- * Load kit configuration from environment variables.
+ * Resolve the kit's runtime config.
  *
  * This kit uses the OpenAI Agents SDK, which only supports OpenAI-compatible
- * models. Set LLM_MODEL to switch between models (e.g. "gpt-4o", "gpt-4o-mini").
- * For a multi-provider kit, see the langchain or claude-agent-sdk kits instead.
+ * models. LLM_MODEL overrides the default model (e.g. "gpt-5.4"). For a
+ * multi-provider kit, see the langchain or vercel-ai kits instead. The Circle
+ * side authenticates through the CLI, so there is no Circle key here.
+ *
+ * There is no chain setting. The `circle` CLI settles each payment on a chain
+ * the seller and the wallet have in common, so a kit-level chain would only be
+ * a label that lies when they disagree.
  */
 export function loadConfig(): KitConfig {
-  const chain = process.env['CIRCLE_CHAIN'] ?? 'BASE';
-  const openaiApiKey = process.env['OPENAI_API_KEY']?.trim();
+  const env = process.env;
+  const key = env.OPENAI_API_KEY?.trim();
 
-  if (!openaiApiKey) {
+  if (!key) {
     throw new Error(
-      'OPENAI_API_KEY is required. Set it in kits/openai-agents/.env.\n' +
-        'This kit uses the OpenAI Agents SDK and only supports OpenAI-compatible models.\n' +
-        'For Anthropic model support, use the langchain or claude-agent-sdk kit instead.',
+      'OPENAI_API_KEY is not set. This kit uses the OpenAI Agents SDK, which only ' +
+        'supports OpenAI-compatible models. Add OPENAI_API_KEY to your .env (see ' +
+        '.env.example) and re-run. For Anthropic model support, use the langchain ' +
+        'or claude-agent-sdk kit instead.',
     );
   }
 
   return {
-    chain,
-    openaiApiKey,
-    model: process.env['LLM_MODEL'] ?? DEFAULT_MODEL,
+    provider: 'openai',
+    providerApiKey: key,
+    model: env.LLM_MODEL?.trim() || DEFAULT_MODEL,
   };
 }

@@ -17,57 +17,60 @@
  */
 
 import { LlmAgent, Gemini, type SingleBeforeToolCallback } from '@google/adk';
+import {
+  buildInstructions,
+  requiresApproval,
+  REJECTED_MESSAGE,
+} from '@agent-stack-starter-kits/kit-core';
 
 import type { KitConfig } from './config';
-import { buildTools, SPEND_TOOLS } from './tools';
+import { buildTools, SHELL_TOOL } from './tools';
 
 /**
  * Signature the entry point uses to drive an approval prompt for a single
- * pending tool call. Resolves true to allow, false to deny.
+ * pending command. Resolves true to allow, false to deny.
  */
-export type ApprovalFn = (
-  toolName: string,
-  args: Record<string, unknown>,
-) => Promise<boolean>;
-
-const SPEND_TOOL_SET = new Set<string>(SPEND_TOOLS);
+export type ApprovalFn = (command: string) => Promise<boolean>;
 
 /**
- * Build the ADK LlmAgent for the Autonomous Payment Agent demo.
+ * Build the ADK LlmAgent.
  *
- * Human-in-the-loop is wired through `beforeToolCallback`: read-only tools run
- * without a pause, and the two USDC-spending tools route to `approve()`. When
- * the callback returns `undefined` the framework runs the tool normally; when
- * it returns a record (here `{error: ...}`) that record is used as the tool
- * result and the actual tool is skipped, the ADK-native equivalent of
- * LangChain's `interruptOn` and Claude Agent SDK's `canUseTool`.
+ * `instruction` is `kit-core`'s prompt: a line of identity, three rules for
+ * working a terminal, and an index of the Circle skills installed on this
+ * machine. There is no playbook of our own — everything about wallets, x402 and
+ * payment comes from those skill documents, which the agent reads with
+ * `read_file` when one turns out to be relevant.
+ *
+ * Human-in-the-loop is wired through `beforeToolCallback`, which sees the call's
+ * arguments as well as its name — and arguments are what the gate needs now,
+ * because with a shell the thing worth stopping is a command, not a tool.
+ * Returning `undefined` runs the tool normally; returning a record uses that
+ * record as the tool result and skips the call, which is how a declined command
+ * reports back without anything having run.
  *
  * The Gemini model is constructed with the API key explicitly to avoid relying
- * on @google/genai's env-var probing (it accepts several aliases). There is no
- * hand-written system prompt: the bootstrap prompt plus setup.md drive the
- * flow.
+ * on @google/genai's env-var probing (it accepts several aliases).
  */
-export function buildAgent(
+export async function buildAgent(
   config: KitConfig,
   approve: ApprovalFn,
-  ask: (q: string) => Promise<string>,
-): LlmAgent {
-  const tools = buildTools(ask);
-
+): Promise<LlmAgent> {
   const beforeToolCallback: SingleBeforeToolCallback = async ({ tool, args }) => {
-    if (!SPEND_TOOL_SET.has(tool.name)) return undefined;
-    const approved = await approve(tool.name, args);
-    if (approved) return undefined;
-    return { error: 'User rejected this action.' };
+    if (tool.name !== SHELL_TOOL) return undefined;
+    const command = String((args as { command?: unknown }).command ?? '');
+    if (!requiresApproval(command)) return undefined;
+    if (await approve(command)) return undefined;
+    return { error: REJECTED_MESSAGE };
   };
 
-  const model = new Gemini({ model: config.model, apiKey: config.googleApiKey });
+  const model = new Gemini({ model: config.model, apiKey: config.providerApiKey });
 
   return new LlmAgent({
     name: 'circle_payment_agent',
     description: 'Autonomous Payment Agent that pays for x402 services on Circle Agent Marketplace.',
+    instruction: await buildInstructions(),
     model,
-    tools,
+    tools: buildTools(),
     beforeToolCallback,
   });
 }

@@ -10,14 +10,14 @@
       },
     },
     "kits/claude-agent-sdk": {
-      "name": "@agent-stack-ecosystem-kits/kit-claude-agent-sdk",
+      "name": "@agent-stack-starter-kits/kit-claude-agent-sdk",
       "version": "0.0.0",
       "dependencies": {
-        "@agent-stack-ecosystem-kits/agent-cli": "workspace:*",
-        "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/agent-cli": "workspace:*",
+        "@agent-stack-starter-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/kit-core": "workspace:*",
         "@anthropic-ai/claude-agent-sdk": "^0.3.144",
         "dotenv": "^17.4.2",
-        "zod": "^4.3.6",
       },
       "devDependencies": {
         "@types/node": "^20.14.0",
@@ -25,11 +25,12 @@
       },
     },
     "kits/google-adk": {
-      "name": "@agent-stack-ecosystem-kits/kit-google-adk",
+      "name": "@agent-stack-starter-kits/kit-google-adk",
       "version": "0.0.0",
       "dependencies": {
-        "@agent-stack-ecosystem-kits/agent-cli": "workspace:*",
-        "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/agent-cli": "workspace:*",
+        "@agent-stack-starter-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/kit-core": "workspace:*",
         "@google/adk": "^1.1.0",
         "@google/genai": "^1.37.0",
         "dotenv": "^17.4.2",
@@ -41,17 +42,19 @@
       },
     },
     "kits/langchain": {
-      "name": "@agent-stack-ecosystem-kits/kit-langchain",
+      "name": "@agent-stack-starter-kits/kit-langchain",
       "version": "0.0.0",
       "dependencies": {
-        "@agent-stack-ecosystem-kits/agent-cli": "workspace:*",
-        "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/agent-cli": "workspace:*",
+        "@agent-stack-starter-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/kit-core": "workspace:*",
         "@langchain/anthropic": "^1.3.26",
         "@langchain/core": "^1.1.44",
         "@langchain/langgraph": "^1.3.0",
         "@langchain/openai": "^1.4.1",
         "deepagents": "^1.10.2",
         "dotenv": "^17.4.2",
+        "langchain": "^1.4.2",
         "zod": "^4.3.6",
       },
       "devDependencies": {
@@ -60,14 +63,15 @@
       },
     },
     "kits/mastra": {
-      "name": "@agent-stack-ecosystem-kits/kit-mastra",
+      "name": "@agent-stack-starter-kits/kit-mastra",
       "version": "0.0.0",
       "dependencies": {
-        "@agent-stack-ecosystem-kits/agent-cli": "workspace:*",
-        "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/agent-cli": "workspace:*",
+        "@agent-stack-starter-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/kit-core": "workspace:*",
         "@mastra/core": "^1.35.0",
         "dotenv": "^17.4.2",
-        "zod": "^4.0.0",
+        "zod": "^4.3.6",
       },
       "devDependencies": {
         "@types/node": "^20.14.0",
@@ -75,14 +79,15 @@
       },
     },
     "kits/openai-agents": {
-      "name": "@agent-stack-ecosystem-kits/kit-openai-agents",
+      "name": "@agent-stack-starter-kits/kit-openai-agents",
       "version": "0.0.0",
       "dependencies": {
-        "@agent-stack-ecosystem-kits/agent-cli": "workspace:*",
-        "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/agent-cli": "workspace:*",
+        "@agent-stack-starter-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/kit-core": "workspace:*",
         "@openai/agents": "^0.11.0",
         "dotenv": "^17.4.2",
-        "zod": "^4.0.0",
+        "zod": "^4.3.6",
       },
       "devDependencies": {
         "@types/node": "^20.14.0",
@@ -90,11 +95,12 @@
       },
     },
     "kits/vercel-ai": {
-      "name": "@agent-stack-ecosystem-kits/kit-vercel-ai",
+      "name": "@agent-stack-starter-kits/kit-vercel-ai",
       "version": "0.0.0",
       "dependencies": {
-        "@agent-stack-ecosystem-kits/agent-cli": "workspace:*",
-        "@agent-stack-ecosystem-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/agent-cli": "workspace:*",
+        "@agent-stack-starter-kits/circle-tools": "workspace:*",
+        "@agent-stack-starter-kits/kit-core": "workspace:*",
         "@ai-sdk/anthropic": "^1.0.0",
         "@ai-sdk/openai": "^1.2.0",
         "ai": "^4.3.0",
@@ -107,7 +113,7 @@
       },
     },
     "packages/agent-cli": {
-      "name": "@agent-stack-ecosystem-kits/agent-cli",
+      "name": "@agent-stack-starter-kits/agent-cli",
       "version": "0.0.0",
       "dependencies": {
         "ink": "^5.2.1",
@@ -121,8 +127,19 @@
       },
     },
     "packages/circle-tools": {
-      "name": "@agent-stack-ecosystem-kits/circle-tools",
+      "name": "@agent-stack-starter-kits/circle-tools",
       "version": "0.0.0",
+      "devDependencies": {
+        "@types/node": "^20.14.0",
+        "typescript": "^5.5.0",
+      },
+    },
+    "packages/kit-core": {
+      "name": "@agent-stack-starter-kits/kit-core",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent-stack-starter-kits/circle-tools": "workspace:*",
+      },
       "devDependencies": {
         "@types/node": "^20.14.0",
         "typescript": "^5.5.0",
@@ -132,21 +149,23 @@
   "packages": {
     "@a2a-js/sdk": ["@a2a-js/sdk@0.3.13", "", { "dependencies": { "uuid": "^11.1.0" }, "peerDependencies": { "@bufbuild/protobuf": "^2.10.2", "@grpc/grpc-js": "^1.11.0", "express": "^4.21.2 || ^5.1.0" }, "optionalPeers": ["@bufbuild/protobuf", "@grpc/grpc-js", "express"] }, "sha512-BZr0f9JVNQs3GKOM9xINWCh6OKIJWZFPyqqVqTym5mxO2Eemc6I/0zL7zWnljHzGdaf5aZQyQN5xa6PSH62q+A=="],
 
-    "@agent-stack-ecosystem-kits/agent-cli": ["@agent-stack-ecosystem-kits/agent-cli@workspace:packages/agent-cli"],
+    "@agent-stack-starter-kits/agent-cli": ["@agent-stack-starter-kits/agent-cli@workspace:packages/agent-cli"],
 
-    "@agent-stack-ecosystem-kits/circle-tools": ["@agent-stack-ecosystem-kits/circle-tools@workspace:packages/circle-tools"],
+    "@agent-stack-starter-kits/circle-tools": ["@agent-stack-starter-kits/circle-tools@workspace:packages/circle-tools"],
 
-    "@agent-stack-ecosystem-kits/kit-claude-agent-sdk": ["@agent-stack-ecosystem-kits/kit-claude-agent-sdk@workspace:kits/claude-agent-sdk"],
+    "@agent-stack-starter-kits/kit-claude-agent-sdk": ["@agent-stack-starter-kits/kit-claude-agent-sdk@workspace:kits/claude-agent-sdk"],
 
-    "@agent-stack-ecosystem-kits/kit-google-adk": ["@agent-stack-ecosystem-kits/kit-google-adk@workspace:kits/google-adk"],
+    "@agent-stack-starter-kits/kit-core": ["@agent-stack-starter-kits/kit-core@workspace:packages/kit-core"],
 
-    "@agent-stack-ecosystem-kits/kit-langchain": ["@agent-stack-ecosystem-kits/kit-langchain@workspace:kits/langchain"],
+    "@agent-stack-starter-kits/kit-google-adk": ["@agent-stack-starter-kits/kit-google-adk@workspace:kits/google-adk"],
 
-    "@agent-stack-ecosystem-kits/kit-mastra": ["@agent-stack-ecosystem-kits/kit-mastra@workspace:kits/mastra"],
+    "@agent-stack-starter-kits/kit-langchain": ["@agent-stack-starter-kits/kit-langchain@workspace:kits/langchain"],
 
-    "@agent-stack-ecosystem-kits/kit-openai-agents": ["@agent-stack-ecosystem-kits/kit-openai-agents@workspace:kits/openai-agents"],
+    "@agent-stack-starter-kits/kit-mastra": ["@agent-stack-starter-kits/kit-mastra@workspace:kits/mastra"],
 
-    "@agent-stack-ecosystem-kits/kit-vercel-ai": ["@agent-stack-ecosystem-kits/kit-vercel-ai@workspace:kits/vercel-ai"],
+    "@agent-stack-starter-kits/kit-openai-agents": ["@agent-stack-starter-kits/kit-openai-agents@workspace:kits/openai-agents"],
+
+    "@agent-stack-starter-kits/kit-vercel-ai": ["@agent-stack-starter-kits/kit-vercel-ai@workspace:kits/vercel-ai"],
 
     "@ai-sdk/anthropic": ["@ai-sdk/anthropic@1.2.12", "", { "dependencies": { "@ai-sdk/provider": "1.1.3", "@ai-sdk/provider-utils": "2.2.8" }, "peerDependencies": { "zod": "^3.0.0" } }, "sha512-YSzjlko7JvuiyQFmI9RN1tNZdEiZxc+6xld/0tq/VkJaHpEzGAb1yiNxxvmYVcjvfu/PcvCxAAYXmTYQQ63IHQ=="],
 
@@ -1512,7 +1531,7 @@
 
     "@a2a-js/sdk/uuid": ["uuid@11.1.1", "", { "bin": { "uuid": "dist/esm/bin/uuid" } }, "sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ=="],
 
-    "@agent-stack-ecosystem-kits/kit-vercel-ai/zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
+    "@agent-stack-starter-kits/kit-vercel-ai/zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
     "@ai-sdk/anthropic/zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
