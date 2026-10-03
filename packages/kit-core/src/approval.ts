@@ -102,6 +102,17 @@ const ESTIMATE = /(?:^| )--estimate(?: |$)/;
 const HELP = /(?:^| )(?:--help|-h)(?: |$)/;
 
 /**
+ * A help flag that directly follows a gated command — e.g. `circle wallet
+ * transfer --help`. Only this counts as a read-only help invocation of a gated
+ * command. A `-h`/`--help` appearing later in the segment — as an argument
+ * value such as `--memo -h`, or after real spend arguments — must not suppress
+ * the gate, so it is matched here rather than with the loose {@link HELP}.
+ */
+const GATED_HELP: readonly RegExp[] = NEEDS_APPROVAL.map(
+  (pattern) => new RegExp(`${pattern.source}\\s+(?:--help|-h)(?:\\s|$)`),
+);
+
+/**
  * Remove quoting and backslash-escaping outside single quotes, the way the
  * shell does when it assembles a word — so `c""ircle wallet transfer` and
  * `c\i\rcle wallet transfer` both normalize to `circle wallet transfer` before
@@ -167,7 +178,7 @@ export function isHelpInvocation(segment: string): boolean {
  * a substitution (`echo $(circle services pay …) --estimate`) stays gated.
  */
 function isReadOnlyInvocation(segment: string): boolean {
-  if (HELP.test(segment)) return true;
+  if (GATED_HELP.some((pattern) => pattern.test(segment))) return true;
   if (!segment.startsWith('circle services pay ')) return false;
   // One payment per segment: `circle services pay X --estimate $(circle services
   // pay Y)` reads as an estimate but contains a real purchase.
